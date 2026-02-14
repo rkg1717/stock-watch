@@ -121,7 +121,15 @@ st.title("📊 SEC Event Price Analyzer")
 
 with st.sidebar:
     st.header("Settings")
-    api_key = st.text_input("OpenAI API Key", type="password")
+    
+    # Priority 1: Check Streamlit Secrets for OpenAI Key
+    if "OPENAI_API_KEY" in st.secrets:
+        api_key = st.secrets["OPENAI_API_KEY"]
+        st.info("Using OpenAI Key from Secrets ✅")
+    else:
+        # Priority 2: Manual input if Secrets are not configured
+        api_key = st.text_input("OpenAI API Key", type="password", help="Enter key or add to Streamlit Secrets")
+        
     ticker = st.text_input("Ticker Symbol", value="AAPL").upper()
     start_date_input = st.date_input("Start Date", datetime.now() - timedelta(days=90))
     duration = st.number_input("Duration (Days)", min_value=1, value=30)
@@ -129,7 +137,7 @@ with st.sidebar:
 
 if run_button:
     if not api_key:
-        st.error("Please provide an OpenAI API Key.")
+        st.error("Please provide an OpenAI API Key in the sidebar or via Streamlit Secrets.")
     else:
         analyzer = EventPriceAnalyzer(api_key)
         start_dt = datetime.combine(start_date_input, datetime.min.time())
