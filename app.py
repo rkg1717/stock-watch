@@ -2,7 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 from edgar import set_identity, Company
-#import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
 # SEC Identity (Required)
@@ -105,4 +105,5 @@ if ticker:
                 st.warning(f"No Form 4 or 8-K filings found for {ticker} in the last year.")
 else:
     st.info("Enter a stock ticker in the sidebar to begin.")
+
 
