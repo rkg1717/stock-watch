@@ -73,7 +73,6 @@ class EventPriceAnalyzer:
             if data.empty: return {k: 0 for k in ["event", "d1", "d5", "d10", "custom", "vol_ratio"]}
             data.index = data.index.date
             
-            # Volume Ratio Calculation
             prior_data = data.loc[data.index < dt].tail(10)
             avg_vol = prior_data['Volume'].mean()
             event_vol = data['Volume'].get(dt, 0)
@@ -173,26 +172,20 @@ if run_button:
             recent_data['Daily_Chg'] = recent_data['Close'].pct_change() * 100
             last_10 = recent_data.tail(10)
             
-            # Matplotlib data cleaning to prevent TypeErrors
             x_labels = list(last_10.index.strftime('%m-%d'))
             price_changes = [float(x) for x in last_10['Daily_Chg'].fillna(0)]
             volume_vals = [float(x) for x in last_10['Volume'].fillna(0)]
 
             fig2, (ax_p, ax_v) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
             
-            # Price Bars
             colors = ['#2ca02c' if x > 0 else '#d62728' for x in price_changes]
             ax_p.bar(x_labels, price_changes, color=colors)
             ax_p.set_ylabel("Price Change %")
             ax_p.axhline(0, color='black', linewidth=0.8)
-
-            # Volume Bars
             ax_v.bar(x_labels, volume_vals, color='gray', alpha=0.5)
             ax_v.set_ylabel("Volume")
             
-            # Logic for overlays and signal strength
             recent_events = [e for e in events if datetime.strptime(e['date'], "%Y-%m-%d") >= (datetime.now() - timedelta(days=10))]
-            
             for rev in recent_events:
                 ev_date_fmt = datetime.strptime(rev['date'], "%Y-%m-%d").strftime('%m-%d')
                 if ev_date_fmt in x_labels:
@@ -209,17 +202,22 @@ if run_button:
                 for re in recent_events:
                     hist_avg = df[df['Event'] == re['type']][custom_col].mean() if not df.empty else 0
                     actual_day_move = last_10['Daily_Chg'].get(re['date'], 0)
-                    
-                    # Signal Strength Logic
-                    if abs(actual_day_move) > 2.0:
-                        strength = "Strong"
-                    elif abs(actual_day_move) > 0.5:
-                        strength = "Moderate"
-                    else:
-                        strength = "Weak"
+                    strength = "Strong" if abs(actual_day_move) > 2.0 else ("Moderate" if abs(actual_day_move) > 0.5 else "Weak")
 
                     recent_table_data.append({
                         "Date": re['date'],
                         "Type": re['type'],
-                        "Sentiment": analyzer.get_
+                        "Sentiment": analyzer.get_sentiment(re['desc']),
+                        "Signal Strength": strength,
+                        "Hist. Avg Move": f"{round(hist_avg, 2)}%",
+                        "Actual Day Move": f"{round(actual_day_move, 2)}%",
+                        "Description": re['desc']
+                    })
+                st.table(pd.DataFrame(recent_table_data))
+        else:
+            st.error("Market data unavailable for recency check.")
 
+        # --- SECTION 3: DATA TABLE ---
+        st.divider()
+        st.subheader("3. Full Historical Logs")
+        st.dataframe(df)
