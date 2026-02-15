@@ -1,6 +1,4 @@
 streamlit
 pandas
 yfinance
-requests
-openai
-matplotlib
+edgar
