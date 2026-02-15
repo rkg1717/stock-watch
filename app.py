@@ -9,136 +9,190 @@ import yfinance as yf
 import openai
 import matplotlib.pyplot as plt
 
-# --- SETUP ---
-warnings.filterwarnings("ignore")
+# --- SETUP & CONFIG ---
+warnings.filterwarnings("ignore", category=FutureWarning)
 SEC_TICKER_MAP_FILE = "sec_company_tickers.json"
 SEC_FORM_MAP = {
-    "4": "Insider Trading", "10-Q": "Quarterly Report", "10-K": "Annual Report",
-    "8-K": "Material Event", "S-1": "IPO/Registration", "SC 13G": "Passive Ownership"
+    "4": "Insider Trading", "5": "Insider Trading (Annual)", "144": "Intent to Sell Stock",
+    "10-Q": "Quarterly Financial Report", "10-K": "Annual Financial Report",
+    "8-K": "Material Event Report", "S-1": "Registration Statement (IPO)",
+    "S-3": "Registration Statement (Secondary)", "S-4": "Registration Statement (Merger/Exchange)",
+    "SC 13G": "Passive Ownership Change", "SC 13D": "Active Ownership Change",
+    "DEFA14A": "Proxy Solicitation", "DEF 14A": "Official Proxy Statement",
+    "6-K": "Foreign Issuer Material Event"
 }
+EXCLUDE_EVENTS = ["Insider Trading", "Insider Trading (Annual)", "Employee Stock Plan"]
 
-class EventAnalyzer:
-    def __init__(self, api_key=None):
+class EventPriceAnalyzer:
+    def __init__(self, api_key):
+        self.openai_key = api_key
         self.sec_ticker_map = None
-        self.client = openai.OpenAI(api_key=api_key) if api_key else None
+        self.client = openai.OpenAI(api_key=self.openai_key) if self.openai_key else None
 
     def get_sentiment(self, text):
-        if not self.client: return "N/A"
+        if not self.client or not text: return "N/A"
         try:
-            resp = self.client.chat.completions.create(
+            response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "system", "content": "Classify as Positive, Negative, or Neutral. One word only."},
-                          {"role": "user", "content": text}],
-                max_tokens=5
+                messages=[
+                    {"role": "system", "content": "Classify SEC filing sentiment as 'Positive', 'Negative', or 'Neutral'. Return one word."},
+                    {"role": "user", "content": text}
+                ],
+                max_tokens=10
             )
-            return resp.choices[0].message.content.strip()
+            return response.choices[0].message.content.strip().replace(".", "")
         except: return "Error"
 
-    def load_sec_map(self):
+    def load_sec_ticker_map(self):
         if self.sec_ticker_map: return
-        headers = {"User-Agent": "Researcher rkg1717@gmail.com"}
+        if os.path.exists(SEC_TICKER_MAP_FILE):
+            with open(SEC_TICKER_MAP_FILE, "r") as f: self.sec_ticker_map = json.load(f)
+            return
+        headers = {"User-Agent": "Financial Researcher rkg1717@gmail.com"} 
         resp = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
         self.sec_ticker_map = {v["ticker"].upper(): str(v["cik_str"]).zfill(10) for v in resp.json().values()}
+        with open(SEC_TICKER_MAP_FILE, "w") as f: json.dump(self.sec_ticker_map, f)
 
-    def fetch_filings(self, ticker, start_date):
-        self.load_sec_map()
+    def classify_event(self, form: str, description: str) -> str:
+        desc = (description or "").upper()
+        event_label = SEC_FORM_MAP.get(form, f"Other SEC Filing ({form})")
+        if form == "8-K":
+            item_map = {
+                "ITEM 1.01": "Material Agreement", "ITEM 2.02": "Earnings Release",
+                "ITEM 5.02": "Leadership/Director Change", "ITEM 8.01": "General Material Event",
+                "ITEM 7.01": "Reg FD Disclosure", "ITEM 1.02": "Agreement Termination"
+            }
+            for code, label in item_map.items():
+                if code in desc: return f"Material Event: {label}"
+            return "Material Event (General)"
+        return event_label
+
+    def get_market_context(self, ticker, date_obj):
+        try:
+            data = yf.download(ticker, start=date_obj - timedelta(days=12), end=date_obj + timedelta(days=2), progress=False)
+            if data.empty: return 0, 0
+            avg_vol = data['Volume'].iloc[:-1].mean()
+            curr_vol = data['Volume'].iloc[-1]
+            if isinstance(curr_vol, pd.Series): curr_vol = curr_vol.iloc[0]
+            vol_ratio = round(float(curr_vol) / float(avg_vol), 2) if avg_vol > 0 else 0
+            day_data = data.iloc[-1]
+            daily_range = round(((day_data['High'] - day_data['Low']) / day_data['Close']) * 100, 2)
+            return vol_ratio, daily_range
+        except: return 0, 0
+
+    def get_price_reactions(self, ticker, date_str, custom_days):
+        try:
+            dt = datetime.strptime(date_str, "%Y-%m-%d").date()
+            data = yf.download(ticker, start=dt-timedelta(days=5), end=dt+timedelta(days=custom_days+5), progress=False)
+            if data.empty: return {k: 0 for k in ["event", "d1", "d5", "d10", "custom"]}
+            data.index = pd.to_datetime(data.index).date
+            def get_p(d):
+                avail = [idx for idx in data.index if idx >= d]
+                if not avail: return 0
+                val = data.loc[min(avail), "Close"]
+                return float(val.iloc[0]) if isinstance(val, pd.Series) else float(val)
+            return {
+                "event": get_p(dt), "d1": get_p(dt+timedelta(days=1)), 
+                "d5": get_p(dt+timedelta(days=5)), "d10": get_p(dt+timedelta(days=10)),
+                "custom": get_p(dt+timedelta(days=custom_days))
+            }
+        except: return {k: 0 for k in ["event", "d1", "d5", "d10", "custom"]}
+
+    def fetch_sec_filings(self, ticker, start_date, end_date):
+        self.load_sec_ticker_map()
         cik = self.sec_ticker_map.get(ticker.upper())
         if not cik: return []
-        headers = {"User-Agent": "Researcher rkg1717@gmail.com"}
-        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-        data = requests.get(url, headers=headers).json()
-        f = data.get("filings", {}).get("recent", {})
-        
-        results = []
-        for form, fdate, desc in zip(f.get("form", []), f.get("filingDate", []), f.get("primaryDocDescription", [])):
-            dt = datetime.strptime(fdate, "%Y-%m-%d")
-            if dt >= start_date:
-                results.append({"date": fdate, "type": SEC_FORM_MAP.get(form, f"Other ({form})"), "desc": desc})
-        return results
+        headers = {"User-Agent": "Financial Researcher rkg1717@gmail.com"} 
+        try:
+            url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+            data = requests.get(url, headers=headers).json()
+            f = data.get("filings", {}).get("recent", {})
+            events = []
+            for form, fdate, desc in zip(f.get("form", []), f.get("filingDate", []), f.get("primaryDocDescription", [])):
+                dt = datetime.strptime(fdate, "%Y-%m-%d")
+                if start_date <= dt <= end_date:
+                    etype = self.classify_event(form, desc)
+                    if etype in EXCLUDE_EVENTS: continue
+                    events.append({"date": fdate, "type": etype, "desc": desc or form, "dt_obj": dt})
+            return events
+        except: return []
 
-# --- UI ---
-st.set_page_config(page_title="SEC Watch", layout="wide")
-st.title("📊 SEC Event Impact Tracker")
+# --- STREAMLIT UI ---
+st.set_page_config(page_title="SEC Event Price Analyzer", layout="wide")
+st.title("📊 SEC Event Price Analyzer")
 
 with st.sidebar:
-    ticker = st.text_input("Ticker", "AAPL").upper()
-    days_back = st.number_input("Lookback Days", 30, 365, 90)
-    duration = st.slider("Impact Window", 1, 30, 10)
-    run = st.button("Run Analysis")
-
-if run:
-    analyzer = EventAnalyzer(st.secrets.get("OPENAI_API_KEY"))
-    start_dt = datetime.now() - timedelta(days=days_back)
-    
-    with st.spinner("Syncing Data..."):
-        hist = yf.download(ticker, start=start_dt - timedelta(days=30), progress=False)
-        hist.index = pd.to_datetime(hist.index).date
-        filings = analyzer.fetch_filings(ticker, start_dt)
-        
-    if hist.empty or not filings:
-        st.error("No data found.")
+    st.header("Settings")
+    # REINSTATED: OpenAI logic as requested
+    if "OPENAI_API_KEY" in st.secrets:
+        api_key = st.secrets["OPENAI_API_KEY"]
+        st.info("Using OpenAI Key from Secrets ✅")
     else:
-        rows = []
-        impact_col = f"{duration}d %"
+        api_key = st.text_input("OpenAI API Key", type="password")
         
-        for f in filings:
-            f_date = datetime.strptime(f['date'], "%Y-%m-%d").date()
-            trading_days = [d for d in hist.index if d >= f_date]
-            if not trading_days: continue
+    ticker = st.text_input("Ticker Symbol", value="AAPL").upper()
+    start_date_input = st.date_input("Start Date", datetime.now() - timedelta(days=90))
+    duration = st.number_input("Duration (Days)", min_value=1, value=30)
+    run_button = st.button("Run Analysis")
+
+if run_button:
+    if not api_key:
+        st.error("Please provide an OpenAI API Key.")
+    else:
+        analyzer = EventPriceAnalyzer(api_key)
+        start_dt = datetime.combine(start_date_input, datetime.min.time())
+        end_dt = datetime.now()
+        
+        with st.spinner(f"Fetching events for {ticker}..."):
+            events = analyzer.fetch_sec_filings(ticker, start_dt, end_dt)
+        
+        if not events:
+            st.warning(f"No relevant events found for {ticker}.")
+        else:
+            rows = []
+            progress_bar = st.progress(0)
+            custom_col = f"pct_{duration}d"
             
-            entry_date = min(trading_days)
-            p_start = float(hist.loc[entry_date, "Close"])
+            for i, ev in enumerate(events):
+                p = analyzer.get_price_reactions(ticker, ev["date"], duration)
+                vol_ratio, day_vol = analyzer.get_market_context(ticker, ev["dt_obj"])
+                def chg(p1, p2): return round(((p2 - p1) / p1) * 100, 2) if p1 > 0 and p2 > 0 else 0
+                
+                rows.append({
+                    "Date": ev["date"], "Event": ev["type"], "Sentiment": analyzer.get_sentiment(ev["desc"]),
+                    "Vol_Ratio": vol_ratio, "Day_Volatility_%": day_vol, "Price": p["event"], 
+                    "pct_1d": chg(p["event"], p["d1"]), "pct_5d": chg(p["event"], p["d5"]), 
+                    "pct_10d": chg(p["event"], p["d10"]), 
+                    custom_col: chg(p["event"], p["custom"]),
+                    "Desc": ev["desc"]
+                })
+                progress_bar.progress((i + 1) / len(events))
+
+            df = pd.DataFrame(rows)
+
+            # --- DISPLAY RESULTS ---
+            col1, col2 = st.columns(2)
+            summary_custom = df.groupby("Event")[custom_col].mean()
             
-            def get_ret(d):
-                t = entry_date + timedelta(days=d)
-                fut = [day for day in hist.index if day >= t]
-                if not fut: return 0.0
-                return round(((float(hist.loc[min(fut), "Close"]) - p_start) / p_start) * 100, 2)
-
-            # SAFE VOLUME RATIO: Check if index exists before accessing
-            prior_df = hist.loc[hist.index < entry_date].tail(10)
-            avg_v = prior_df['Volume'].mean()
-            cur_v = hist.loc[entry_date, 'Volume']
-            # Ensure cur_v is a single number, not a series
-            if isinstance(cur_v, pd.Series): cur_v = cur_v.iloc[0]
-            v_ratio = round(float(cur_v) / float(avg_v), 2) if avg_v > 0 else 1.0
-
-            rows.append({
-                "Date": f['date'], "Event": f['type'], "Sentiment": analyzer.get_sentiment(f['desc']),
-                "1d %": get_ret(1), "5d %": get_ret(5), impact_col: get_ret(duration),
-                "Vol_Ratio": v_ratio, "Description": f['desc']
-            })
+            with col1:
+                st.subheader(f"Performance Summary ({duration}d)")
+                if not summary_custom.empty:
+                    st.success(f"🚀 Best: {summary_custom.idxmax()} ({round(summary_custom.max(), 2)}% avg)")
+                    st.error(f"📉 Worst: {summary_custom.idxmin()} ({round(summary_custom.min(), 2)}% avg)")
             
-        df = pd.DataFrame(rows)
-        
-        # --- SECTION 1: HISTORICAL CHART ---
-        st.subheader("Historical Performance by Event")
-        summary = df.groupby("Event")[[impact_col]].mean()
-        st.bar_chart(summary)
-        
-        # --- SECTION 2: RECENCY CHART (The "Double Decker") ---
-        st.divider()
-        st.subheader("Recent Activity: Price & Volume")
-        recent = hist.tail(10).copy()
-        recent['Daily_Ret'] = recent['Close'].pct_change() * 100
-        
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 5), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
-        dates_str = [d.strftime('%m-%d') for d in recent.index]
-        
-        ax1.bar(dates_str, recent['Daily_Ret'].fillna(0), color=['g' if x >= 0 else 'r' for x in recent['Daily_Ret'].fillna(0)])
-        ax1.set_ylabel("Price %")
-        ax2.bar(dates_str, recent['Volume'], color='gray', alpha=0.3)
-        ax2.set_ylabel("Volume")
+            # --- DYNAMIC CHART ---
+            fig, ax = plt.subplots(figsize=(10, 5))
+            plot_cols = ["pct_1d", "pct_5d", "pct_10d", custom_col]
+            summary_data = df.groupby("Event")[plot_cols].mean().reindex(columns=plot_cols)
+            colors = ['#e31a1c', '#1f78b4', '#ff7f00', '#636363'] 
+            summary_data.plot(kind="bar", ax=ax, color=colors, edgecolor='black', linewidth=0.7)
+            ax.set_title(f"{ticker} Avg Reaction (Target: {duration}d)")
+            ax.axhline(0, color='black', linewidth=1)
+            plt.xticks(rotation=45, ha="right")
+            st.pyplot(fig)
 
-        # Mark filings on chart
-        for r_date in df['Date']:
-            d_obj = datetime.strptime(r_date, "%Y-%m-%d").date()
-            if d_obj in recent.index:
-                ax1.axvline(x=d_obj.strftime('%m-%d'), color='blue', linestyle='--')
-
-        st.pyplot(fig)
-
-        # --- SECTION 3: DATA TABLE ---
-        st.divider()
-        df['Signal'] = df.apply(lambda x: "🔥 Strong" if x['Vol_Ratio'] > 1.5 and abs(x[impact_col]) > 2 else "Neutral", axis=1)
-        st.dataframe(df[["Date", "Event", "Sentiment", "Signal", impact_col, "Vol_Ratio", "Description"]])
+            st.subheader("Detailed Report")
+            st.dataframe(df)
+            
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button("Download CSV Report", data=csv, file_name=f"{ticker}_report.csv", mime='text/csv')
