@@ -4,7 +4,7 @@ import pandas as pd
 from edgar import set_identity, Company
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
-import openai
+#import openai
 
 # SEC Identity (Required)
 set_identity("rkg1717@gmail.com")
@@ -182,3 +182,4 @@ Based on analysis of {len(filings)} SEC filings from {start_date} to {end_date}:
                 st.write(traceback.format_exc())
 else:
     st.info("👈 Enter a stock ticker in the sidebar to begin")
+
