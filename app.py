@@ -52,44 +52,6 @@ class EventPriceAnalyzer:
         self.sec_ticker_map = {v["ticker"].upper(): str(v["cik_str"]).zfill(10) for v in resp.json().values()}
         with open(SEC_TICKER_MAP_FILE, "w") as f: json.dump(self.sec_ticker_map, f)
 
-    def classify_event(self, form: str, description: str) -> str:
-        desc = (description or "").upper()
-        event_label = SEC_FORM_MAP.get(form, f"Other SEC Filing ({form})")
-        if form == "8-K":
-            item_map = {
-                "ITEM 1.01": "Material Agreement", "ITEM 2.02": "Earnings Release",
-                "ITEM 5.02": "Leadership/Director Change", "ITEM 8.01": "General Material Event",
-                "ITEM 7.01": "Reg FD Disclosure", "ITEM 1.02": "Agreement Termination"
-            }
-            for code, label in item_map.items():
-                if code in desc: return f"Material Event: {label}"
-            return "Material Event (General)"
-        return event_label
-
-    def get_price_reactions(self, ticker, date_str, custom_days):
-        try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d").date()
-            data = yf.download(ticker, start=dt-timedelta(days=15), end=dt+timedelta(days=custom_days+5), progress=False)
-            if data.empty: return {k: 0 for k in ["event", "d1", "d5", "d10", "custom", "vol_ratio"]}
-            data.index = data.index.date
-            
-            prior_data = data.loc[data.index < dt].tail(10)
-            avg_vol = prior_data['Volume'].mean()
-            event_vol = data['Volume'].get(dt, 0)
-            vol_ratio = round(float(event_vol) / float(avg_vol), 2) if avg_vol > 0 else 1.0
-
-            def get_p(d):
-                avail = [idx for idx in data.index if idx >= d]
-                return float(data.loc[min(avail), "Close"]) if avail else 0
-            
-            return {
-                "event": get_p(dt), "d1": get_p(dt+timedelta(days=1)), 
-                "d5": get_p(dt+timedelta(days=5)), "d10": get_p(dt+timedelta(days=10)),
-                "custom": get_p(dt+timedelta(days=custom_days)),
-                "vol_ratio": vol_ratio
-            }
-        except: return {k: 0 for k in ["event", "d1", "d5", "d10", "custom", "vol_ratio"]}
-
     def fetch_sec_filings(self, ticker, start_date, end_date):
         self.load_sec_ticker_map()
         cik = self.sec_ticker_map.get(ticker.upper())
@@ -103,9 +65,9 @@ class EventPriceAnalyzer:
             for form, fdate, desc in zip(f.get("form", []), f.get("filingDate", []), f.get("primaryDocDescription", [])):
                 dt = datetime.strptime(fdate, "%Y-%m-%d")
                 if start_date <= dt <= end_date:
-                    etype = self.classify_event(form, desc)
-                    if etype in EXCLUDE_EVENTS: continue
-                    events.append({"date": fdate, "type": etype, "desc": desc or form, "dt_obj": dt})
+                    event_label = SEC_FORM_MAP.get(form, f"Other ({form})")
+                    if event_label in EXCLUDE_EVENTS: continue
+                    events.append({"date": fdate, "type": event_label, "desc": desc or form, "dt_obj": dt})
             return events
         except: return []
 
@@ -123,100 +85,80 @@ with st.sidebar:
 if run_button:
     api_key = st.secrets.get("OPENAI_API_KEY")
     analyzer = EventPriceAnalyzer(api_key)
-    
     start_dt = datetime.combine(start_date_input, datetime.min.time())
-    end_dt = datetime.now()
-    custom_col = f"pct_{duration}d"
     
     with st.spinner(f"Analyzing {ticker}..."):
-        events = analyzer.fetch_sec_filings(ticker, start_dt, end_dt)
-    
-    if not events:
-        st.warning(f"No relevant events found for {ticker}.")
+        full_hist = yf.download(ticker, start=start_dt - timedelta(days=30), end=datetime.now(), progress=False)
+        filings = analyzer.fetch_sec_filings(ticker, start_dt, datetime.now())
+
+    if full_hist.empty or not filings:
+        st.error("Data retrieval failed. Please check the ticker symbol.")
     else:
+        full_hist.index = pd.to_datetime(full_hist.index).date
         rows = []
-        progress_bar = st.progress(0)
-        for i, ev in enumerate(events):
-            p = analyzer.get_price_reactions(ticker, ev["date"], duration)
-            def chg(p1, p2): return round(((p2 - p1) / p1) * 100, 2) if p1 > 0 and p2 > 0 else 0
+        custom_col = f"pct_{duration}d"
+
+        for ev in filings:
+            ev_date = ev['dt_obj'].date()
+            trading_days = [d for d in full_hist.index if d >= ev_date]
+            if not trading_days: continue
             
+            start_date = min(trading_days)
+            p_start = float(full_hist.loc[start_date, "Close"])
+
+            def get_stats(days_out):
+                target = start_date + timedelta(days=days_out)
+                future = [d for d in full_hist.index if d >= target]
+                if not future: return 0.0
+                p_end = float(full_hist.loc[min(future), "Close"])
+                return round(((p_end - p_start) / p_start) * 100, 2)
+
+            # Volume Ratio
+            prior_vol = full_hist.loc[full_hist.index < start_date].tail(10)['Volume'].mean()
+            curr_vol = full_hist.loc[start_date, 'Volume']
+            v_ratio = round(float(curr_vol) / float(prior_vol), 2) if prior_vol > 0 else 1.0
+
             rows.append({
                 "Date": ev["date"], "Event": ev["type"], "Sentiment": analyzer.get_sentiment(ev["desc"]),
-                "pct_1d": chg(p["event"], p["d1"]), "pct_5d": chg(p["event"], p["d5"]), 
-                "pct_10d": chg(p["event"], p["d10"]), 
-                custom_col: chg(p["event"], p["custom"]),
-                "Vol_Ratio": p["vol_ratio"],
-                "Desc": ev["desc"]
+                "pct_1d": get_stats(1), "pct_5d": get_stats(5), "pct_10d": get_stats(10),
+                custom_col: get_stats(duration), "Vol_Ratio": v_ratio, "Desc": ev["desc"]
             })
-            progress_bar.progress((i + 1) / len(events))
 
         df = pd.DataFrame(rows)
 
-        # --- SECTION 1 ---
-        st.subheader(f"1. Historical Event Reactions ({duration} Day Impact)")
-        fig1, ax1 = plt.subplots(figsize=(10, 4))
-        plot_cols = ["pct_1d", "pct_5d", "pct_10d", custom_col]
-        summary_data = df.groupby("Event")[plot_cols].mean()
-        summary_data.plot(kind="bar", ax=ax1, color=['#e31a1c', '#1f78b4', '#ff7f00', '#636363'], edgecolor='black')
-        ax1.axhline(0, color='black', linewidth=1)
-        plt.xticks(rotation=45, ha="right")
-        st.pyplot(fig1)
+        # --- SECTION 1: HISTORICAL ---
+        st.subheader(f"1. Historical Event Impacts ({duration} Days)")
+        summary = df.groupby("Event")[[ "pct_1d", "pct_5d", "pct_10d", custom_col]].mean()
+        st.bar_chart(summary)
 
-        # --- SECTION 2 ---
+        # --- SECTION 2: RECENCY ---
         st.divider()
-        st.subheader("2. Recency Check: Last 10 Days Performance")
+        st.subheader("2. Recency Check: Last 10 Trading Days")
+        recent = full_hist.tail(10).copy()
+        recent['Chg'] = recent['Close'].pct_change() * 100
         
-        recent_data = yf.download(ticker, period="15d", progress=False)
-        if not recent_data.empty:
-            # Safely handle columns and ensure they are numeric
-            recent_data['Daily_Chg'] = recent_data['Close'].pct_change() * 100
-            last_10 = recent_data.tail(10).copy()
-            
-            # CRITICAL FIX: Convert index to list of strings and ensure values are 1D arrays
-            x_labels = last_10.index.strftime('%m-%d').tolist()
-            price_vals = last_10['Daily_Chg'].fillna(0).values.flatten()
-            volume_vals = last_10['Volume'].fillna(0).values.flatten()
-
-            fig2, (ax_p, ax_v) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
-            
-            # Price Bars
-            colors = ['#2ca02c' if x > 0 else '#d62728' for x in price_vals]
-            ax_p.bar(x_labels, price_changes if 'price_changes' in locals() else price_vals, color=colors)
-            ax_p.set_ylabel("Price %")
-            ax_p.axhline(0, color='black', linewidth=0.8)
-
-            # Volume Bars
-            ax_v.bar(x_labels, volume_vals, color='gray', alpha=0.5)
-            ax_v.set_ylabel("Volume")
-            
-            recent_events = [e for e in events if datetime.strptime(e['date'], "%Y-%m-%d") >= (datetime.now() - timedelta(days=10))]
-            for rev in recent_events:
-                ev_date_fmt = datetime.strptime(rev['date'], "%Y-%m-%d").strftime('%m-%d')
-                if ev_date_fmt in x_labels:
-                    ax_p.axvline(x=ev_date_fmt, color='black', linestyle='--', alpha=0.7)
-                    ax_v.axvline(x=ev_date_fmt, color='black', linestyle='--', alpha=0.7)
-            
-            plt.xticks(rotation=45)
-            st.pyplot(fig2)
-            
-            if recent_events:
-                st.write("**Recent Filing Signal Analysis:**")
-                recent_table_data = []
-                for re in recent_events:
-                    hist_avg = df[df['Event'] == re['type']][custom_col].mean() if not df.empty else 0
-                    actual_day_move = last_10['Daily_Chg'].get(re['date'], 0)
-                    strength = "Strong" if abs(float(actual_day_move)) > 2.0 else ("Moderate" if abs(float(actual_day_move)) > 0.5 else "Weak")
-
-                    recent_table_data.append({
-                        "Date": re['date'], "Type": re['type'],
-                        "Sentiment": analyzer.get_sentiment(re['desc']),
-                        "Signal Strength": strength,
-                        "Hist. Avg Move": f"{round(float(hist_avg), 2)}%",
-                        "Actual Day Move": f"{round(float(actual_day_move), 2)}%",
-                        "Description": re['desc']
-                    })
-                st.table(pd.DataFrame(recent_table_data))
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
+        x_axis = [d.strftime('%m-%d') for d in recent.index]
         
+        ax1.bar(x_axis, recent['Chg'].fillna(0), color=['g' if x >= 0 else 'r' for x in recent['Chg'].fillna(0)])
+        ax1.set_ylabel("Price %")
+        ax1.axhline(0, color='black', linewidth=0.8)
+        
+        ax2.bar(x_axis, recent['Volume'], color='gray', alpha=0.4)
+        ax2.set_ylabel("Volume")
+
+        # Map filings to Chart 2
+        for r in rows:
+            r_dt = datetime.strptime(r['Date'], "%Y-%m-%d").date()
+            if r_dt in recent.index:
+                ax1.axvline(x=r_dt.strftime('%m-%d'), color='blue', linestyle='--')
+
+        plt.xticks(rotation=45)
+        st.pyplot(fig)
+
+        # --- SECTION 3: TABLE ---
         st.divider()
-        st.subheader("3. Full Historical Logs")
-        st.dataframe(df)
+        st.subheader("3. Detailed Filing Log")
+        # Add Signal logic only at the table level to keep it clean
+        df['Signal'] = df.apply(lambda x: "Strong" if abs(x[custom_col]) > 2.5 else "Neutral", axis=1)
+        st.dataframe(df[["Date", "Event", "Sentiment", "Signal", custom_col, "Vol_Ratio", "Desc"]])
