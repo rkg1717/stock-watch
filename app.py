@@ -75,7 +75,7 @@ with st.sidebar:
     start_date_input = st.date_input("Historical Start Date", datetime.now() - timedelta(days=120))
     duration = st.number_input("Analysis Duration (Days)", min_value=1, value=30)
     run_button = st.button("Run Analysis", type="primary")
-    if run_button:
+if run_button:
     status = st.empty()
     status.info(f"🚀 Analyzing {ticker}...")
     sec = SECAnalyzer()
@@ -93,7 +93,6 @@ with st.sidebar:
             trading_days = [d for d in hist.index if d >= f_date]
             if not trading_days: continue
             entry_date = min(trading_days)
-            
             p_start = float(hist.at[entry_date, "Close"])
             prior_vol = hist.loc[hist.index < entry_date].tail(10)['Volume'].mean()
             v_ratio = round(float(hist.at[entry_date, 'Volume']) / prior_vol, 2) if prior_vol > 0 else 1.0
@@ -126,12 +125,7 @@ with st.sidebar:
         st.dataframe(df, use_container_width=True)
     else:
         status.empty()
-        if hist.empty: st.warning("Stock data could not be retrieved. Ticker might be invalid.")
-        if not filings: st.warning(f"No qualifying filings found for {ticker} since {start_date_input}.")
-            else:
-        status.empty()
         if hist.empty:
             st.warning("Stock data could not be retrieved. Ticker might be invalid.")
         if not filings:
             st.warning(f"No qualifying filings found for {ticker} since {start_date_input}.")
-    
