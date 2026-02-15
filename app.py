@@ -41,7 +41,7 @@ if ticker:
                 filings = company.get_filings(form=["4", "8-K"]).to_pandas()
                 filings['filing_date'] = pd.to_datetime(filings['filing_date']).dt.date
                 filings = filings[(filings['filing_date'] >= start_date) & (filings['filing_date'] <= end_date)]
-                
+         
                 if hist.empty or filings.empty:
                     st.error("No data found for this date range")
                 else:
@@ -50,7 +50,7 @@ if ticker:
                     days_to_track = [1, 3, 10, 30]
                     
                     for _, filing in filings.iterrows():
-                        f_date = filing['filing_date'].date()
+                        f_date = filing['filing_date']  # Remove .date() since it's already a date object
                         form_type = filing['form']
                         
                         # Find trading days after filing
@@ -182,5 +182,6 @@ Based on analysis of {len(filings)} SEC filings from {start_date} to {end_date}:
                 st.write(traceback.format_exc())
 else:
     st.info("👈 Enter a stock ticker in the sidebar to begin")
+
 
 
