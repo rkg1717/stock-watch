@@ -96,23 +96,42 @@ if run_button:
             p_start = float(hist.at[entry_date, "Close"])
             prior_vol = hist.loc[hist.index < entry_date].tail(10)['Volume'].mean()
             v_ratio = round(float(hist.at[entry_date, 'Volume']) / prior_vol, 2) if prior_vol > 0 else 1.0
+            if not hist.empty and filings:
+        status.empty()
+        rows = []
+        impact_col = f"pct_{duration}d"
+        for ev in filings:
+            f_date = ev['dt_obj']
+            trading_days = [d for d in hist.index if d >= f_date]
+            if not trading_days: continue
+            entry_date = min(trading_days)
+            
+            # Use .item() or float() to ensure we have a single number
+            p_start = float(hist.at[entry_date, "Close"])
+            prior_vol = hist.loc[hist.index < entry_date].tail(10)['Volume'].mean()
+            v_ratio = round(float(hist.at[entry_date, 'Volume']) / prior_vol, 2) if prior_vol > 0 else 1.0
 
             def get_ret(days):
                 target = entry_date + timedelta(days=days)
                 fut = [d for d in hist.index if d >= target]
                 if not fut: return 0.0
-                return round(((float(hist.at[min(fut), "Close"]) - p_start) / p_start) * 100, 2)
+                p_end = float(hist.at[min(fut), "Close"])
+                return round(((p_end - p_start) / p_start) * 100, 2)
 
             rows.append({"Date": ev["date"], "Event": ev["type"], "Vol_Ratio": v_ratio, 
                          "pct_1d": get_ret(1), "pct_5d": get_ret(5), impact_col: get_ret(duration)})
             
         df = pd.DataFrame(rows)
         st.subheader(f"1. Average Performance ({duration} Days)")
-        st.bar_chart(df.groupby("Event")[[impact_col]].mean())
+        # Grouping and calculating mean for the bars
+        chart_data = df.groupby("Event")[[impact_col]].mean()
+        st.bar_chart(chart_data)
+
         st.divider()
         st.subheader("2. Recency Check: Last 10 Trading Days")
         recent = hist.tail(10).copy()
         recent['Chg'] = (recent['Close'].pct_change() * 100).fillna(0)
+        
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
         x_labs = [d.strftime('%m-%d') for d in recent.index]
         ax1.bar(x_labs, recent['Chg'], color=['g' if x >= 0 else 'r' for x in recent['Chg']])
@@ -120,6 +139,7 @@ if run_button:
         ax2.bar(x_labs, recent['Volume'], color='gray', alpha=0.4)
         ax2.set_ylabel("Volume")
         st.pyplot(fig)
+        
         st.divider()
         st.subheader("3. Historical Data Log")
         st.dataframe(df, use_container_width=True)
