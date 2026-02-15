@@ -1,8 +1,8 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from edgar import set_identity, Company
-import matplotlib.pyplot as plt
+from edgar import set_identity, Company, edgartools
+#import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
 # SEC Identity (Required)
