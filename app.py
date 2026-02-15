@@ -69,18 +69,26 @@ class EventPriceAnalyzer:
     def get_price_reactions(self, ticker, date_str, custom_days):
         try:
             dt = datetime.strptime(date_str, "%Y-%m-%d").date()
-            data = yf.download(ticker, start=dt-timedelta(days=5), end=dt+timedelta(days=custom_days+5), progress=False)
-            if data.empty: return {k: 0 for k in ["event", "d1", "d5", "d10", "custom"]}
+            data = yf.download(ticker, start=dt-timedelta(days=10), end=dt+timedelta(days=custom_days+5), progress=False)
+            if data.empty: return {k: 0 for k in ["event", "d1", "d5", "d10", "custom", "vol_ratio"]}
             data.index = data.index.date
+            
+            # Volume Ratio Calculation (Event Day Vol / 10-day Avg Vol)
+            avg_vol = data['Volume'].loc[:dt].tail(11).head(10).mean()
+            event_vol = data['Volume'].get(dt, 0)
+            vol_ratio = round(event_vol / avg_vol, 2) if avg_vol > 0 else 1.0
+
             def get_p(d):
                 avail = [idx for idx in data.index if idx >= d]
                 return float(data.loc[min(avail), "Close"]) if avail else 0
+            
             return {
                 "event": get_p(dt), "d1": get_p(dt+timedelta(days=1)), 
                 "d5": get_p(dt+timedelta(days=5)), "d10": get_p(dt+timedelta(days=10)),
-                "custom": get_p(dt+timedelta(days=custom_days))
+                "custom": get_p(dt+timedelta(days=custom_days)),
+                "vol_ratio": vol_ratio
             }
-        except: return {k: 0 for k in ["event", "d1", "d5", "d10", "custom"]}
+        except: return {k: 0 for k in ["event", "d1", "d5", "d10", "custom", "vol_ratio"]}
 
     def fetch_sec_filings(self, ticker, start_date, end_date):
         self.load_sec_ticker_map()
@@ -118,7 +126,6 @@ if run_button:
     
     start_dt = datetime.combine(start_date_input, datetime.min.time())
     end_dt = datetime.now()
-    
     custom_col = f"pct_{duration}d"
     
     with st.spinner(f"Analyzing {ticker}..."):
@@ -138,6 +145,7 @@ if run_button:
                 "pct_1d": chg(p["event"], p["d1"]), "pct_5d": chg(p["event"], p["d5"]), 
                 "pct_10d": chg(p["event"], p["d10"]), 
                 custom_col: chg(p["event"], p["custom"]),
+                "Vol_Ratio": p["vol_ratio"],
                 "Desc": ev["desc"]
             })
             progress_bar.progress((i + 1) / len(events))
@@ -155,52 +163,58 @@ if run_button:
         plt.xticks(rotation=45, ha="right")
         st.pyplot(fig1)
 
-# --- SECTION 2: RECENCY CHECK ---
+        # --- SECTION 2: RECENCY CHECK WITH VOLUME ---
         st.divider()
-        st.subheader("2. Recency Check: Last 10 Days Performance")
+        st.subheader("2. Recency Check: Last 10 Days Price & Volume")
         
         recent_data = yf.download(ticker, period="15d", progress=False)
         if not recent_data.empty:
             recent_data['Daily_Chg'] = recent_data['Close'].pct_change() * 100
             last_10 = recent_data.tail(10)
-            
-            # Filter filings from the last 10 days
             recent_events = [e for e in events if datetime.strptime(e['date'], "%Y-%m-%d") >= (datetime.now() - timedelta(days=10))]
             
-            fig2, ax2 = plt.subplots(figsize=(10, 4))
+            # Create subplots: Top for Price % Change, Bottom for Volume
+            fig2, (ax_p, ax_v) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
             
-            # --- COLOR LOGIC: Green for positive, Red for negative ---
+            # Price Bar Plot
             colors = ['#2ca02c' if x > 0 else '#d62728' for x in last_10['Daily_Chg']]
-            ax2.bar(last_10.index.strftime('%m-%d'), last_10['Daily_Chg'], color=colors, label='Daily %')
+            ax_p.bar(last_10.index.strftime('%m-%d'), last_10['Daily_Chg'], color=colors)
+            ax_p.set_title(f"{ticker} Recent Performance & Volume Spikes")
+            ax_p.set_ylabel("Price Change %")
+            ax_p.axhline(0, color='black', linewidth=0.8)
+
+            # Volume Plot
+            ax_v.bar(last_10.index.strftime('%m-%d'), last_10['Volume'], color='gray', alpha=0.5)
+            ax_v.set_ylabel("Volume")
             
+            # Overlay events on both axes
             for rev in recent_events:
                 ev_date_fmt = datetime.strptime(rev['date'], "%Y-%m-%d").strftime('%m-%d')
-                ax2.axvline(x=ev_date_fmt, color='black', linestyle='--', alpha=0.7)
-                ax2.text(ev_date_fmt, ax2.get_ylim()[1]*0.9, rev['type'], color='black', rotation=90, fontweight='bold', fontsize=8)
+                ax_p.axvline(x=ev_date_fmt, color='black', linestyle='--', alpha=0.7)
+                ax_p.text(ev_date_fmt, ax_p.get_ylim()[1]*0.8, rev['type'], color='black', rotation=90, fontweight='bold', fontsize=8)
+                ax_v.axvline(x=ev_date_fmt, color='black', linestyle='--', alpha=0.7)
             
-            ax2.set_title(f"{ticker} Recent Performance (Red/Green = Daily Change)")
-            ax2.set_ylabel("Daily Change %")
-            ax2.axhline(0, color='black', linewidth=0.8)
+            plt.xticks(rotation=45)
             st.pyplot(fig2)
             
             if recent_events:
-                st.write("**Recent Filing Comparison (Actual vs. Historical Average):**")
+                st.write("**Recent Filing Details:**")
                 recent_table_data = []
                 for re in recent_events:
-                    # Logic to find the historical average for this specific event type
                     hist_avg = df[df['Event'] == re['type']][custom_col].mean() if not df.empty else 0
+                    hist_vol = df[df['Event'] == re['type']]['Vol_Ratio'].mean() if not df.empty else 1.0
                     
                     recent_table_data.append({
                         "Date": re['date'],
                         "Type": re['type'],
                         "Sentiment": analyzer.get_sentiment(re['desc']),
                         "Hist. Avg Move": f"{round(hist_avg, 2)}%",
-                        "Actual Day Move": f"{round(last_10['Daily_Chg'].get(re['date'], 0), 2)}%",
+                        "Hist. Vol Ratio": f"{round(hist_vol, 2)}x",
                         "Description": re['desc']
                     })
                 st.table(pd.DataFrame(recent_table_data))
-            else:
-                st.info("No SEC filings occurred in the last 10 days.")
+        else:
+            st.error("Could not retrieve market data.")
 
         # --- SECTION 3: DATA TABLE ---
         st.divider()
