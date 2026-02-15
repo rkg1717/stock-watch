@@ -27,7 +27,7 @@ if run_analysis:
     with st.status("Running historical analysis...", expanded=True) as h_status:
         try:
             stock = yf.Ticker(ticker)
-            hist = stock.history(start=start_date, periods=min(analysis_days + 1, 365))
+            hist = stock.history(start=start_date, period=min(analysis_days + 1, 365))
             
             if not hist.empty:
                 hist['Daily Return %'] = hist['Close'].pct_change() * 100
@@ -133,3 +133,4 @@ if ticker:
                 st.warning(f"No Form 4 or 8-K filings found for {ticker} in the last year.")
 else:
     st.info("Enter a stock ticker in the sidebar to begin.")
+
