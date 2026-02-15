@@ -69,12 +69,13 @@ class EventPriceAnalyzer:
     def get_price_reactions(self, ticker, date_str, custom_days):
         try:
             dt = datetime.strptime(date_str, "%Y-%m-%d").date()
-            data = yf.download(ticker, start=dt-timedelta(days=10), end=dt+timedelta(days=custom_days+5), progress=False)
+            data = yf.download(ticker, start=dt-timedelta(days=15), end=dt+timedelta(days=custom_days+5), progress=False)
             if data.empty: return {k: 0 for k in ["event", "d1", "d5", "d10", "custom", "vol_ratio"]}
             data.index = data.index.date
             
-            # Volume Ratio Calculation (Event Day Vol / 10-day Avg Vol)
-            avg_vol = data['Volume'].loc[:dt].tail(11).head(10).mean()
+            # Volume Ratio Calculation
+            prior_data = data.loc[data.index < dt].tail(10)
+            avg_vol = prior_data['Volume'].mean()
             event_vol = data['Volume'].get(dt, 0)
             vol_ratio = round(event_vol / avg_vol, 2) if avg_vol > 0 else 1.0
 
@@ -163,68 +164,62 @@ if run_button:
         plt.xticks(rotation=45, ha="right")
         st.pyplot(fig1)
 
-# --- SECTION 2: RECENCY CHECK WITH VOLUME ---
+        # --- SECTION 2: RECENCY CHECK ---
         st.divider()
-        st.subheader("2. Recency Check: Last 10 Days Price & Volume")
+        st.subheader("2. Recency Check: Last 10 Days Performance")
         
         recent_data = yf.download(ticker, period="15d", progress=False)
         if not recent_data.empty:
             recent_data['Daily_Chg'] = recent_data['Close'].pct_change() * 100
             last_10 = recent_data.tail(10)
-            recent_events = [e for e in events if datetime.strptime(e['date'], "%Y-%m-%d") >= (datetime.now() - timedelta(days=10))]
             
-            # Create subplots
+            # Matplotlib data cleaning to prevent TypeErrors
+            x_labels = list(last_10.index.strftime('%m-%d'))
+            price_changes = [float(x) for x in last_10['Daily_Chg'].fillna(0)]
+            volume_vals = [float(x) for x in last_10['Volume'].fillna(0)]
+
             fig2, (ax_p, ax_v) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
             
-            # Clean data for Matplotlib to avoid TypeErrors
-            x_labels = list(last_10.index.strftime('%m-%d'))
-            price_changes = list(last_10['Daily_Chg'].fillna(0))
-            volume_data = list(last_10['Volume'].fillna(0))
-
-            # Price Bar Plot
+            # Price Bars
             colors = ['#2ca02c' if x > 0 else '#d62728' for x in price_changes]
             ax_p.bar(x_labels, price_changes, color=colors)
-            ax_p.set_title(f"{ticker} Recent Performance & Volume Spikes")
             ax_p.set_ylabel("Price Change %")
             ax_p.axhline(0, color='black', linewidth=0.8)
 
-            # Volume Plot - using simplified call to avoid float conversion errors
-            ax_v.bar(x_labels, volume_data, color='gray', alpha=0.5)
+            # Volume Bars
+            ax_v.bar(x_labels, volume_vals, color='gray', alpha=0.5)
             ax_v.set_ylabel("Volume")
             
-            # Overlay events
+            # Logic for overlays and signal strength
+            recent_events = [e for e in events if datetime.strptime(e['date'], "%Y-%m-%d") >= (datetime.now() - timedelta(days=10))]
+            
             for rev in recent_events:
                 ev_date_fmt = datetime.strptime(rev['date'], "%Y-%m-%d").strftime('%m-%d')
                 if ev_date_fmt in x_labels:
                     ax_p.axvline(x=ev_date_fmt, color='black', linestyle='--', alpha=0.7)
-                    ax_p.text(ev_date_fmt, ax_p.get_ylim()[1]*0.8, rev['type'], color='black', rotation=90, fontweight='bold', fontsize=8)
+                    ax_p.text(ev_date_fmt, ax_p.get_ylim()[1]*0.7, rev['type'], color='black', rotation=90, fontweight='bold', fontsize=8)
                     ax_v.axvline(x=ev_date_fmt, color='black', linestyle='--', alpha=0.7)
             
             plt.xticks(rotation=45)
             st.pyplot(fig2)
             
             if recent_events:
-                st.write("**Recent Filing Details:**")
+                st.write("**Recent Filing Signal Analysis:**")
                 recent_table_data = []
                 for re in recent_events:
                     hist_avg = df[df['Event'] == re['type']][custom_col].mean() if not df.empty else 0
-                    hist_vol = df[df['Event'] == re['type']]['Vol_Ratio'].mean() if not df.empty else 1.0
+                    actual_day_move = last_10['Daily_Chg'].get(re['date'], 0)
                     
+                    # Signal Strength Logic
+                    if abs(actual_day_move) > 2.0:
+                        strength = "Strong"
+                    elif abs(actual_day_move) > 0.5:
+                        strength = "Moderate"
+                    else:
+                        strength = "Weak"
+
                     recent_table_data.append({
                         "Date": re['date'],
                         "Type": re['type'],
-                        "Sentiment": analyzer.get_sentiment(re['desc']),
-                        "Hist. Avg Move": f"{round(hist_avg, 2)}%",
-                        "Hist. Vol Ratio": f"{round(hist_vol, 2)}x",
-                        "Description": re['desc']
-                    })
-                st.table(pd.DataFrame(recent_table_data))
-        else:
-            st.error("Could not retrieve market data.")
-
-        # --- SECTION 3: DATA TABLE ---
-        st.divider()
-        st.subheader("3. Full Historical Logs")
-        st.dataframe(df)
-
+                        "Sentiment": analyzer.get_
 
