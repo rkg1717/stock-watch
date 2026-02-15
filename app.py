@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import requests
 import pandas as pd
 import matplotlib.pyplot as plt
+import yfinance as yf
 
 # --- SETUP & CONFIG ---
 warnings.filterwarnings("ignore")
@@ -19,27 +20,24 @@ SEC_FORM_MAP = {
 }
 EXCLUDE_EVENTS = ["Insider Trading", "Insider Trading (Annual)", "Employee Stock Plan"]
 
-class AlphaVantageClient:
-    def __init__(self, api_key):
-        self.api_key = api_key
-        self.base_url = "https://www.alphavantage.co/query"
-
+class StockDataClient:
     def get_daily_data(self, ticker):
-        params = {"function": "TIME_SERIES_DAILY", "symbol": ticker.strip().upper(), "outputsize": "full", "apikey": self.api_key}
         try:
-            resp_raw = requests.get(self.base_url, params=params, timeout=15)
-            resp = resp_raw.json()
-            if "Note" in resp:
-                st.warning("⏳ Alpha Vantage Limit: Please wait 60 seconds.")
+            # Fetching 1 year of data for context
+            df = yf.download(ticker.strip().upper(), period="1y", progress=False)
+            if df.empty:
                 return pd.DataFrame()
-            if "Time Series (Daily)" not in resp: return pd.DataFrame()
-            data = resp["Time Series (Daily)"]
-            df = pd.DataFrame.from_dict(data, orient='index')
-            df.columns = ["Open", "High", "Low", "Close", "Volume"]
+            
+            # Clean up multi-index columns if they exist
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+                
+            df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
             df.index = pd.to_datetime(df.index).date
-            df = df.astype(float).sort_index()
-            return df
-        except: return pd.DataFrame()
+            return df.astype(float).sort_index()
+        except Exception as e:
+            st.error(f"Stock Data Error: {e}")
+            return pd.DataFrame()
 
 class SECAnalyzer:
     def load_sec_map(self):
@@ -67,27 +65,23 @@ class SECAnalyzer:
                     events.append({"date": fdate, "type": etype, "desc": desc or form, "dt_obj": dt_obj})
             return events
         except: return []
-       # --- UI ---
+            # --- UI ---
 st.set_page_config(page_title="SEC Watch", layout="wide")
-st.title("📊 Alpha-SEC Event & Volume Analyzer")
+st.title("📊 SEC Event & Volume Analyzer (No-API Version)")
 
 with st.sidebar:
     st.header("Settings")
-    av_key = st.secrets.get("AV_API_KEY", "")
-    if av_key: st.success("API Key Active ✅")
-    else: av_key = st.text_input("Alpha Vantage API Key", type="password")
-    
     ticker = st.text_input("Ticker Symbol", value="VZ").upper()
     start_date_input = st.date_input("Historical Start Date", datetime.now() - timedelta(days=120))
     duration = st.number_input("Analysis Duration (Days)", min_value=1, value=30)
     run_button = st.button("Run Analysis", type="primary")
-if run_button:
+    if run_button:
     status = st.empty()
-    status.info(f"🚀 Running analysis for {ticker}...")
+    status.info(f"🚀 Analyzing {ticker}...")
     sec = SECAnalyzer()
-    av = AlphaVantageClient(av_key)
+    client = StockDataClient()
     ticker_map = sec.load_sec_map()
-    hist = av.get_daily_data(ticker)
+    hist = client.get_daily_data(ticker)
     filings = sec.fetch_filings(ticker, start_date_input, ticker_map)
     
     if not hist.empty and filings:
@@ -99,21 +93,21 @@ if run_button:
             trading_days = [d for d in hist.index if d >= f_date]
             if not trading_days: continue
             entry_date = min(trading_days)
+            
             p_start = float(hist.at[entry_date, "Close"])
             prior_vol = hist.loc[hist.index < entry_date].tail(10)['Volume'].mean()
-            curr_vol = float(hist.at[entry_date, 'Volume'])
-            v_ratio = round(curr_vol / prior_vol, 2) if prior_vol > 0 else 1.0
+            v_ratio = round(float(hist.at[entry_date, 'Volume']) / prior_vol, 2) if prior_vol > 0 else 1.0
 
             def get_ret(days):
                 target = entry_date + timedelta(days=days)
                 fut = [d for d in hist.index if d >= target]
                 if not fut: return 0.0
-                p_end = float(hist.at[min(fut), "Close"])
-                return round(((p_end - p_start) / p_start) * 100, 2)
+                return round(((float(hist.at[min(fut), "Close"]) - p_start) / p_start) * 100, 2)
 
             rows.append({"Date": ev["date"], "Event": ev["type"], "Vol_Ratio": v_ratio, 
                          "pct_1d": get_ret(1), "pct_5d": get_ret(5), impact_col: get_ret(duration)})
-            df = pd.DataFrame(rows)
+            
+        df = pd.DataFrame(rows)
         st.subheader(f"1. Average Performance ({duration} Days)")
         st.bar_chart(df.groupby("Event")[[impact_col]].mean())
         st.divider()
@@ -132,5 +126,12 @@ if run_button:
         st.dataframe(df, use_container_width=True)
     else:
         status.empty()
-        if hist.empty: st.warning("Price data missing. Wait 60s for Alpha Vantage limit.")
+        if hist.empty: st.warning("Stock data could not be retrieved. Ticker might be invalid.")
         if not filings: st.warning(f"No qualifying filings found for {ticker} since {start_date_input}.")
+            else:
+        status.empty()
+        if hist.empty:
+            st.warning("Stock data could not be retrieved. Ticker might be invalid.")
+        if not filings:
+            st.warning(f"No qualifying filings found for {ticker} since {start_date_input}.")
+    
