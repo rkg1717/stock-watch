@@ -17,7 +17,7 @@ with st.sidebar:
     ticker = st.text_input("Enter Ticker", value="TSLA").upper()
     
     if ticker:
-    col1, col2 = st.columns(2)
+        col1, col2 = st.columns(2)
     with col1:
         start_date = st.date_input("Analysis Start Date", value=datetime(datetime.now().year - 1, 10, 1))
     with col2:
@@ -217,6 +217,7 @@ Based on analysis of {len(filings)} SEC filings from {start_date} to {end_date}:
                 st.write(traceback.format_exc())
 else:
     st.info("👈 Enter a stock ticker in the sidebar to begin")
+
 
 
 
