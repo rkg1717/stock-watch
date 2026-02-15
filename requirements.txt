@@ -1,5 +1,7 @@
 streamlit
 pandas
 yfinance
-edgartools
+edgar
+matplotlib
+
 
