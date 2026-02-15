@@ -39,7 +39,7 @@ if ticker:
                 st.write("📋 Fetching SEC filings...")
                 company = Company(ticker)
                 filings = company.get_filings(form=["4", "8-K"]).to_pandas()
-                filings['filing_date'] = pd.to_datetime(filings['filing_date'])
+                filings['filing_date'] = pd.to_datetime(filings['filing_date']).dt.date
                 filings = filings[(filings['filing_date'] >= start_date) & (filings['filing_date'] <= end_date)]
                 
                 if hist.empty or filings.empty:
@@ -98,7 +98,7 @@ if ticker:
                         st.markdown("---")
                         st.subheader("📌 2. Most Recent SEC Events (Last 10 Days)")
                         
-                        recent_filings = filings[filings['filing_date'] >= datetime.now() - timedelta(days=10)]
+                        recent_filings = filings[filings['filing_date'] >= (datetime.now() - timedelta(days=10)).date()]
                         if not recent_filings.empty:
                             recent_results = results_df[results_df['Date'].isin(recent_filings['filing_date'].dt.date)]
                             if not recent_results.empty:
@@ -182,4 +182,5 @@ Based on analysis of {len(filings)} SEC filings from {start_date} to {end_date}:
                 st.write(traceback.format_exc())
 else:
     st.info("👈 Enter a stock ticker in the sidebar to begin")
+
 
