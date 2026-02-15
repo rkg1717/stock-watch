@@ -17,14 +17,21 @@ with st.sidebar:
     ticker = st.text_input("Enter Ticker", value="TSLA").upper()
     
     if ticker:
-        st.divider()
-        col1, col2 = st.columns(2)
-        with col1:
-            start_date = st.date_input("Analysis Start Date", value=datetime(datetime.now().year - 1, 10, 1))
-        with col2:
-            end_date = st.date_input("Analysis End Date", value=datetime.now())
-        
-        run_analysis = st.button("Run SEC Event Analysis", use_container_width=True)
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("Analysis Start Date", value=datetime(datetime.now().year - 1, 10, 1))
+    with col2:
+        end_date = st.date_input("Analysis End Date", value=datetime.now())
+    
+    col3, col4 = st.columns(2)
+    with col3:
+        st.caption("Recent Event Analysis Period:")
+    with col4:
+        current_event_days = st.number_input("Days After Event", min_value=1, max_value=365, value=30)
+    
+    run_analysis = st.button("Run SEC Event Analysis", use_container_width=True)
+    
+    run_analysis = st.button("Run SEC Event Analysis", use_container_width=True)
 
 if ticker:
     if run_analysis:
@@ -77,7 +84,7 @@ if ticker:
                         
                         # --- DISPLAY CHARTS ---
                         st.markdown("---")
-                        st.subheader("📊 1. Historical SEC Event Price Impact")
+                        st.subheader(f"📊 1. Historical SEC Event Price Impact ({start_date} to {end_date})")
                         
                         # Pivot data for charting
                         pivot_data = results_df.groupby(['Form', 'Days'])['Return %'].mean().unstack()
@@ -86,7 +93,7 @@ if ticker:
                         pivot_data.plot(kind='bar', ax=ax, width=0.8)
                         ax.set_xlabel('SEC Form Type')
                         ax.set_ylabel('Average Return %')
-                        ax.set_title(f'{ticker} - Average Price Change After SEC Filings (Historical)')
+                        ax.set_title(f'{ticker} - Average Price Change After SEC Filings')
                         ax.legend(title='Days After Filing', labels=['1 Day', '3 Days', '10 Days', '30 Days'])
                         ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
                         ax.grid(axis='y', alpha=0.3)
@@ -96,19 +103,47 @@ if ticker:
                         
                         # --- CURRENT EVENTS ---
                         st.markdown("---")
-                        st.subheader("📌 2. Most Recent SEC Events (Last 10 Days)")
+                        recent_days = current_event_days
+                        recent_cutoff = datetime.now().date() - timedelta(days=recent_days)
+                        st.subheader(f"📌 2. Recent SEC Events (Last {recent_days} Days)")
                         
-                        recent_filings = filings[filings['filing_date'] >= (datetime.now() - timedelta(days=10)).date()]
+                        recent_filings = filings[filings['filing_date'] >= recent_cutoff]
                         if not recent_filings.empty:
-                            recent_results = results_df[results_df['Date'].isin(recent_filings['filing_date'].dt.date)]
-                            if not recent_results.empty:
+                            # Re-calculate with current_event_days instead of fixed days
+                            recent_results = []
+                            for _, filing in recent_filings.iterrows():
+                                f_date = filing['filing_date']
+                                form_type = filing['form']
+                                
+                                trading_days = hist.index[hist.index.date >= f_date]
+                                if len(trading_days) > 0:
+                                    filing_price = hist.loc[trading_days[0], 'Close']
+                                    
+                                    for days in [0, 3, 10, 30]:
+                                        if days == 0:
+                                            pct_change = 0
+                                        elif len(trading_days) > days:
+                                            future_price = hist.loc[trading_days[days], 'Close']
+                                            pct_change = ((future_price - filing_price) / filing_price) * 100
+                                        else:
+                                            continue
+                                        
+                                        recent_results.append({
+                                            'Date': f_date,
+                                            'Form': form_type,
+                                            'Days': days,
+                                            'Return %': round(pct_change, 2)
+                                        })
+                            
+                            if recent_results:
+                                recent_results_df = pd.DataFrame(recent_results)
                                 fig2, ax2 = plt.subplots(figsize=(12, 6))
-                                recent_pivot = recent_results.groupby(['Form', 'Days'])['Return %'].mean().unstack()
+                                recent_pivot = recent_results_df.groupby(['Form', 'Days'])['Return %'].mean().unstack()
                                 recent_pivot.plot(kind='bar', ax=ax2, width=0.8, color=['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A'])
                                 ax2.set_xlabel('SEC Form Type')
                                 ax2.set_ylabel('Average Return %')
-                                ax2.set_title(f'{ticker} - Recent SEC Event Price Impact (Last 10 Days)')
-                                ax2.legend(title='Days After Filing', labels=['1 Day', '3 Days', '10 Days', '30 Days'])
+                                ax2.set_title(f'{ticker} - Recent SEC Event Price Impact (Last {recent_days} Days)')
+                                ax2.legend(title='Days After Filing', labels=['0 Days', '3 Days', '10 Days', '30 Days'])
                                 ax2.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
                                 ax2.grid(axis='y', alpha=0.3)
                                 plt.xticks(rotation=45)
@@ -117,7 +152,7 @@ if ticker:
                             else:
                                 st.info("No price data available yet for recent filings")
                         else:
-                            st.info("No SEC filings in the last 10 days")
+                            st.info(f"No SEC filings in the last {recent_days} days")
                         
                         # --- AI INTERPRETATION ---
                         st.markdown("---")
@@ -182,6 +217,7 @@ Based on analysis of {len(filings)} SEC filings from {start_date} to {end_date}:
                 st.write(traceback.format_exc())
 else:
     st.info("👈 Enter a stock ticker in the sidebar to begin")
+
 
 
 
