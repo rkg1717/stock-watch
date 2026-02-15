@@ -126,12 +126,11 @@ if ticker and run_analysis:
                     form_counts = results_df.groupby('Form_Desc').size()
                     
                     fig, ax = plt.subplots(figsize=(12, 6))
-                    bars = pivot_data.plot(kind='bar', ax=ax, width=0.8)
+                    pivot_data.plot(kind='bar', ax=ax, width=0.8)
                     
                     # Add count labels on top of bars
-                    for container in ax.containers:
-                        labels = [f"{v:.1f}%\\n(n={form_counts[bar.get_x() + bar.get_width()/2 < len(form_counts)]})" if v > 0 else "" for v in container.datavalues]
-                        ax.bar_label(container, labels=labels, padding=3, fontsize=8)
+                    for i, (form_desc, count) in enumerate(form_counts.items()):
+                        ax.text(i, ax.get_ylim()[1] * 0.95, f'n={count}', ha='center', va='top', fontsize=9, fontweight='bold')
                     
                     ax.set_xlabel('SEC Event Type')
                     ax.set_ylabel('Average Return %')
@@ -186,14 +185,11 @@ if ticker and run_analysis:
                             # Get counts for recent events
                             recent_form_counts = recent_results_df.groupby('Form_Desc').size()
                             
-                            bars2 = recent_pivot.plot(kind='bar', ax=ax2, width=0.8, color=['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A'])
+                            recent_pivot.plot(kind='bar', ax=ax2, width=0.8, color=['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A'])
                             
-                            # Add count labels on top of bars
-                            for i, container in enumerate(ax2.containers):
-                                form_desc = recent_pivot.index[i]
-                                count = recent_form_counts.get(form_desc, 0)
-                                labels = [f"{v:.1f}%\\n(n={count})" if v != 0 else "" for v in container.datavalues]
-                                ax2.bar_label(container, labels=labels, padding=3, fontsize=8)
+                            # Add count labels on top
+                            for i, (form_desc, count) in enumerate(recent_form_counts.items()):
+                                ax2.text(i, ax2.get_ylim()[1] * 0.95, f'n={count}', ha='center', va='top', fontsize=9, fontweight='bold')
                             
                             ax2.set_xlabel('SEC Event Type')
                             ax2.set_ylabel('Average Return %')
@@ -276,6 +272,7 @@ else:
         st.info("👈 Click 'Run SEC Event Analysis' to start")
     else:
         st.info("👈 Enter a stock ticker in the sidebar to begin")
+
 
 
 
