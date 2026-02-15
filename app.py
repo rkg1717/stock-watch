@@ -6,6 +6,41 @@ from edgar import set_identity, Company
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
+# SEC Form Type Descriptions - Most Impactful Forms
+SEC_FORM_DESCRIPTIONS = {
+    '3': 'Initial Insider Filing',
+    '4': 'Insider Trading',
+    '5': 'Annual Insider Report',
+    '8-K': 'Current Events',
+    '10-K': 'Annual Report',
+    '10-Q': 'Quarterly Report',
+    '10-K/A': 'Annual Amendment',
+    '10-Q/A': 'Quarterly Amendment',
+    '13D': 'Major Shareholder Filing',
+    '13G': 'Large Holding Notice',
+    '13D/A': 'Major Shareholder Amendment',
+    '13G/A': 'Large Holding Amendment',
+    '14A': 'Proxy Statement',
+    '14D-1': 'Tender Offer',
+    '14D-9': 'Tender Response',
+    '14E': 'Tender Offer Rules',
+    '20-F': 'Foreign Annual Report',
+    '20-F/A': 'Foreign Amendment',
+    '6-K': 'Foreign Periodic Report',
+    'S-1': 'IPO Registration',
+    'S-3': 'Short Form Registration',
+    'S-4': 'Merger Registration',
+    'F-1': 'Foreign IPO',
+    'F-3': 'Foreign Short Form',
+    'F-4': 'Foreign Merger',
+    '424B5': 'Final Prospectus',
+    'DEF14A': 'Definitive Proxy',
+    'DEFM14A': 'Merger Proxy',
+}
+
+def get_form_description(form_code):
+    return SEC_FORM_DESCRIPTIONS.get(form_code, form_code)
+
 # SEC Identity (Required)
 set_identity("rkg1717@gmail.com")
 
@@ -83,14 +118,24 @@ if ticker and run_analysis:
                     st.markdown("---")
                     st.subheader(f"📊 1. Historical SEC Event Price Impact ({start_date} to {end_date})")
                     
-                    # Pivot data for charting
-                    pivot_data = results_df.groupby(['Form', 'Days'])['Return %'].mean().unstack()
+                    # Map form codes to descriptions and count occurrences
+                    results_df['Form_Desc'] = results_df['Form'].apply(get_form_description)
+                    pivot_data = results_df.groupby(['Form_Desc', 'Days'])['Return %'].mean().unstack()
+                    
+                    # Get counts for each form type
+                    form_counts = results_df.groupby('Form_Desc').size()
                     
                     fig, ax = plt.subplots(figsize=(12, 6))
-                    pivot_data.plot(kind='bar', ax=ax, width=0.8)
-                    ax.set_xlabel('SEC Form Type')
+                    bars = pivot_data.plot(kind='bar', ax=ax, width=0.8)
+                    
+                    # Add count labels on top of bars
+                    for container in ax.containers:
+                        labels = [f"{v:.1f}%\\n(n={form_counts[bar.get_x() + bar.get_width()/2 < len(form_counts)]})" if v > 0 else "" for v in container.datavalues]
+                        ax.bar_label(container, labels=labels, padding=3, fontsize=8)
+                    
+                    ax.set_xlabel('SEC Event Type')
                     ax.set_ylabel('Average Return %')
-                    ax.set_title(f'{ticker} - Average Price Change After SEC Filings')
+                    ax.set_title(f'{ticker} - Average Price Change After SEC Events')
                     ax.legend(title='Days After Filing', labels=['1 Day', '3 Days', '10 Days', '30 Days'])
                     ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
                     ax.grid(axis='y', alpha=0.3)
@@ -133,10 +178,24 @@ if ticker and run_analysis:
                         
                         if recent_results:
                             recent_results_df = pd.DataFrame(recent_results)
+                            recent_results_df['Form_Desc'] = recent_results_df['Form'].apply(get_form_description)
+                            
                             fig2, ax2 = plt.subplots(figsize=(12, 6))
-                            recent_pivot = recent_results_df.groupby(['Form', 'Days'])['Return %'].mean().unstack()
-                            recent_pivot.plot(kind='bar', ax=ax2, width=0.8, color=['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A'])
-                            ax2.set_xlabel('SEC Form Type')
+                            recent_pivot = recent_results_df.groupby(['Form_Desc', 'Days'])['Return %'].mean().unstack()
+                            
+                            # Get counts for recent events
+                            recent_form_counts = recent_results_df.groupby('Form_Desc').size()
+                            
+                            bars2 = recent_pivot.plot(kind='bar', ax=ax2, width=0.8, color=['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A'])
+                            
+                            # Add count labels on top of bars
+                            for i, container in enumerate(ax2.containers):
+                                form_desc = recent_pivot.index[i]
+                                count = recent_form_counts.get(form_desc, 0)
+                                labels = [f"{v:.1f}%\\n(n={count})" if v != 0 else "" for v in container.datavalues]
+                                ax2.bar_label(container, labels=labels, padding=3, fontsize=8)
+                            
+                            ax2.set_xlabel('SEC Event Type')
                             ax2.set_ylabel('Average Return %')
                             ax2.set_title(f'{ticker} - Recent SEC Event Price Impact (Last {current_event_days} Days)')
                             ax2.legend(title='Days After Filing', labels=['0 Days', '3 Days', '10 Days', '30 Days'])
@@ -217,6 +276,7 @@ else:
         st.info("👈 Click 'Run SEC Event Analysis' to start")
     else:
         st.info("👈 Enter a stock ticker in the sidebar to begin")
+
 
 
 
