@@ -163,7 +163,7 @@ if run_button:
         plt.xticks(rotation=45, ha="right")
         st.pyplot(fig1)
 
-        # --- SECTION 2: RECENCY CHECK WITH VOLUME ---
+# --- SECTION 2: RECENCY CHECK WITH VOLUME ---
         st.divider()
         st.subheader("2. Recency Check: Last 10 Days Price & Volume")
         
@@ -173,26 +173,32 @@ if run_button:
             last_10 = recent_data.tail(10)
             recent_events = [e for e in events if datetime.strptime(e['date'], "%Y-%m-%d") >= (datetime.now() - timedelta(days=10))]
             
-            # Create subplots: Top for Price % Change, Bottom for Volume
+            # Create subplots
             fig2, (ax_p, ax_v) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
             
+            # Clean data for Matplotlib to avoid TypeErrors
+            x_labels = list(last_10.index.strftime('%m-%d'))
+            price_changes = list(last_10['Daily_Chg'].fillna(0))
+            volume_data = list(last_10['Volume'].fillna(0))
+
             # Price Bar Plot
-            colors = ['#2ca02c' if x > 0 else '#d62728' for x in last_10['Daily_Chg']]
-            ax_p.bar(last_10.index.strftime('%m-%d'), last_10['Daily_Chg'], color=colors)
+            colors = ['#2ca02c' if x > 0 else '#d62728' for x in price_changes]
+            ax_p.bar(x_labels, price_changes, color=colors)
             ax_p.set_title(f"{ticker} Recent Performance & Volume Spikes")
             ax_p.set_ylabel("Price Change %")
             ax_p.axhline(0, color='black', linewidth=0.8)
 
-            # Volume Plot
-            ax_v.bar(last_10.index.strftime('%m-%d'), last_10['Volume'], color='gray', alpha=0.5)
+            # Volume Plot - using simplified call to avoid float conversion errors
+            ax_v.bar(x_labels, volume_data, color='gray', alpha=0.5)
             ax_v.set_ylabel("Volume")
             
-            # Overlay events on both axes
+            # Overlay events
             for rev in recent_events:
                 ev_date_fmt = datetime.strptime(rev['date'], "%Y-%m-%d").strftime('%m-%d')
-                ax_p.axvline(x=ev_date_fmt, color='black', linestyle='--', alpha=0.7)
-                ax_p.text(ev_date_fmt, ax_p.get_ylim()[1]*0.8, rev['type'], color='black', rotation=90, fontweight='bold', fontsize=8)
-                ax_v.axvline(x=ev_date_fmt, color='black', linestyle='--', alpha=0.7)
+                if ev_date_fmt in x_labels:
+                    ax_p.axvline(x=ev_date_fmt, color='black', linestyle='--', alpha=0.7)
+                    ax_p.text(ev_date_fmt, ax_p.get_ylim()[1]*0.8, rev['type'], color='black', rotation=90, fontweight='bold', fontsize=8)
+                    ax_v.axvline(x=ev_date_fmt, color='black', linestyle='--', alpha=0.7)
             
             plt.xticks(rotation=45)
             st.pyplot(fig2)
@@ -220,4 +226,5 @@ if run_button:
         st.divider()
         st.subheader("3. Full Historical Logs")
         st.dataframe(df)
+
 
