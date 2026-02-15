@@ -76,7 +76,7 @@ class EventPriceAnalyzer:
             prior_data = data.loc[data.index < dt].tail(10)
             avg_vol = prior_data['Volume'].mean()
             event_vol = data['Volume'].get(dt, 0)
-            vol_ratio = round(event_vol / avg_vol, 2) if avg_vol > 0 else 1.0
+            vol_ratio = round(float(event_vol) / float(avg_vol), 2) if avg_vol > 0 else 1.0
 
             def get_p(d):
                 avail = [idx for idx in data.index if idx >= d]
@@ -152,36 +152,40 @@ if run_button:
 
         df = pd.DataFrame(rows)
 
-        # --- SECTION 1: HISTORICAL AVERAGE ---
+        # --- SECTION 1 ---
         st.subheader(f"1. Historical Event Reactions ({duration} Day Impact)")
         fig1, ax1 = plt.subplots(figsize=(10, 4))
         plot_cols = ["pct_1d", "pct_5d", "pct_10d", custom_col]
         summary_data = df.groupby("Event")[plot_cols].mean()
         summary_data.plot(kind="bar", ax=ax1, color=['#e31a1c', '#1f78b4', '#ff7f00', '#636363'], edgecolor='black')
-        ax1.set_title(f"Average Performance by Event Type (Historical)")
         ax1.axhline(0, color='black', linewidth=1)
         plt.xticks(rotation=45, ha="right")
         st.pyplot(fig1)
 
-        # --- SECTION 2: RECENCY CHECK ---
+        # --- SECTION 2 ---
         st.divider()
         st.subheader("2. Recency Check: Last 10 Days Performance")
         
         recent_data = yf.download(ticker, period="15d", progress=False)
         if not recent_data.empty:
+            # Safely handle columns and ensure they are numeric
             recent_data['Daily_Chg'] = recent_data['Close'].pct_change() * 100
-            last_10 = recent_data.tail(10)
+            last_10 = recent_data.tail(10).copy()
             
-            x_labels = list(last_10.index.strftime('%m-%d'))
-            price_changes = [float(x) for x in last_10['Daily_Chg'].fillna(0)]
-            volume_vals = [float(x) for x in last_10['Volume'].fillna(0)]
+            # CRITICAL FIX: Convert index to list of strings and ensure values are 1D arrays
+            x_labels = last_10.index.strftime('%m-%d').tolist()
+            price_vals = last_10['Daily_Chg'].fillna(0).values.flatten()
+            volume_vals = last_10['Volume'].fillna(0).values.flatten()
 
             fig2, (ax_p, ax_v) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
             
-            colors = ['#2ca02c' if x > 0 else '#d62728' for x in price_changes]
-            ax_p.bar(x_labels, price_changes, color=colors)
-            ax_p.set_ylabel("Price Change %")
+            # Price Bars
+            colors = ['#2ca02c' if x > 0 else '#d62728' for x in price_vals]
+            ax_p.bar(x_labels, price_changes if 'price_changes' in locals() else price_vals, color=colors)
+            ax_p.set_ylabel("Price %")
             ax_p.axhline(0, color='black', linewidth=0.8)
+
+            # Volume Bars
             ax_v.bar(x_labels, volume_vals, color='gray', alpha=0.5)
             ax_v.set_ylabel("Volume")
             
@@ -190,7 +194,6 @@ if run_button:
                 ev_date_fmt = datetime.strptime(rev['date'], "%Y-%m-%d").strftime('%m-%d')
                 if ev_date_fmt in x_labels:
                     ax_p.axvline(x=ev_date_fmt, color='black', linestyle='--', alpha=0.7)
-                    ax_p.text(ev_date_fmt, ax_p.get_ylim()[1]*0.7, rev['type'], color='black', rotation=90, fontweight='bold', fontsize=8)
                     ax_v.axvline(x=ev_date_fmt, color='black', linestyle='--', alpha=0.7)
             
             plt.xticks(rotation=45)
@@ -202,22 +205,18 @@ if run_button:
                 for re in recent_events:
                     hist_avg = df[df['Event'] == re['type']][custom_col].mean() if not df.empty else 0
                     actual_day_move = last_10['Daily_Chg'].get(re['date'], 0)
-                    strength = "Strong" if abs(actual_day_move) > 2.0 else ("Moderate" if abs(actual_day_move) > 0.5 else "Weak")
+                    strength = "Strong" if abs(float(actual_day_move)) > 2.0 else ("Moderate" if abs(float(actual_day_move)) > 0.5 else "Weak")
 
                     recent_table_data.append({
-                        "Date": re['date'],
-                        "Type": re['type'],
+                        "Date": re['date'], "Type": re['type'],
                         "Sentiment": analyzer.get_sentiment(re['desc']),
                         "Signal Strength": strength,
-                        "Hist. Avg Move": f"{round(hist_avg, 2)}%",
-                        "Actual Day Move": f"{round(actual_day_move, 2)}%",
+                        "Hist. Avg Move": f"{round(float(hist_avg), 2)}%",
+                        "Actual Day Move": f"{round(float(actual_day_move), 2)}%",
                         "Description": re['desc']
                     })
                 st.table(pd.DataFrame(recent_table_data))
-        else:
-            st.error("Market data unavailable for recency check.")
-
-        # --- SECTION 3: DATA TABLE ---
+        
         st.divider()
         st.subheader("3. Full Historical Logs")
         st.dataframe(df)
