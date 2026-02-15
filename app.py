@@ -155,7 +155,7 @@ if run_button:
         plt.xticks(rotation=45, ha="right")
         st.pyplot(fig1)
 
-        # --- SECTION 2: RECENCY CHECK ---
+# --- SECTION 2: RECENCY CHECK ---
         st.divider()
         st.subheader("2. Recency Check: Last 10 Days Performance")
         
@@ -164,34 +164,46 @@ if run_button:
             recent_data['Daily_Chg'] = recent_data['Close'].pct_change() * 100
             last_10 = recent_data.tail(10)
             
-            # Identify events in last 10 days
+            # Filter filings from the last 10 days
             recent_events = [e for e in events if datetime.strptime(e['date'], "%Y-%m-%d") >= (datetime.now() - timedelta(days=10))]
             
             fig2, ax2 = plt.subplots(figsize=(10, 4))
-            ax2.bar(last_10.index.strftime('%m-%d'), last_10['Daily_Chg'], color='skyblue', label='Actual Daily %')
             
-            # Annotate graph with events
+            # --- COLOR LOGIC: Green for positive, Red for negative ---
+            colors = ['#2ca02c' if x > 0 else '#d62728' for x in last_10['Daily_Chg']]
+            ax2.bar(last_10.index.strftime('%m-%d'), last_10['Daily_Chg'], color=colors, label='Daily %')
+            
             for rev in recent_events:
                 ev_date_fmt = datetime.strptime(rev['date'], "%Y-%m-%d").strftime('%m-%d')
-                ax2.axvline(x=ev_date_fmt, color='red', linestyle='--', alpha=0.5)
-                ax2.text(ev_date_fmt, ax2.get_ylim()[1]*0.8, rev['type'], color='red', rotation=90, fontweight='bold', fontsize=8)
+                ax2.axvline(x=ev_date_fmt, color='black', linestyle='--', alpha=0.7)
+                ax2.text(ev_date_fmt, ax2.get_ylim()[1]*0.9, rev['type'], color='black', rotation=90, fontweight='bold', fontsize=8)
             
-            ax2.set_title(f"{ticker} Recent Returns vs. SEC Filing Dates")
+            ax2.set_title(f"{ticker} Recent Performance (Red/Green = Daily Change)")
             ax2.set_ylabel("Daily Change %")
             ax2.axhline(0, color='black', linewidth=0.8)
             st.pyplot(fig2)
             
-            # Display filings found in this 10-day period
             if recent_events:
-                st.write("**Filings detected in this 10-day window:**")
-                recent_df = pd.DataFrame(recent_events)[['date', 'type', 'desc']]
-                st.table(recent_df)
+                st.write("**Recent Filing Comparison (Actual vs. Historical Average):**")
+                recent_table_data = []
+                for re in recent_events:
+                    # Logic to find the historical average for this specific event type
+                    hist_avg = df[df['Event'] == re['type']][custom_col].mean() if not df.empty else 0
+                    
+                    recent_table_data.append({
+                        "Date": re['date'],
+                        "Type": re['type'],
+                        "Sentiment": analyzer.get_sentiment(re['desc']),
+                        "Hist. Avg Move": f"{round(hist_avg, 2)}%",
+                        "Actual Day Move": f"{round(last_10['Daily_Chg'].get(re['date'], 0), 2)}%",
+                        "Description": re['desc']
+                    })
+                st.table(pd.DataFrame(recent_table_data))
             else:
                 st.info("No SEC filings occurred in the last 10 days.")
-        else:
-            st.error("Could not retrieve recent market data.")
 
         # --- SECTION 3: DATA TABLE ---
         st.divider()
         st.subheader("3. Full Historical Logs")
         st.dataframe(df)
+
