@@ -4,8 +4,6 @@ import pandas as pd
 from edgar import Company
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
-# SEC Identity (Required)
-#set_identity("rkg1717@gmail.com")
 st.set_page_config(page_title="SEC Event Price Impact Analyzer", layout="wide")
 st.title("📊 SEC Event Price Impact Analysis")
 # Sidebar Inputs
@@ -27,9 +25,17 @@ if ticker:
                 st.write("📈 Fetching stock data...")
                 stock = yf.Ticker(ticker)
                 hist = stock.history(start=start_date, end=end_date + timedelta(days=30))
+                # Get company name from ticker
+                st.write("📋 Looking up company name...")
+                stock_info = yf.Ticker(ticker)
+                company_name = stock_info.info.get('longName', None)
+                if not company_name:
+                    st.error(f"Could not find company name for ticker {ticker}. Please try a different ticker.")
+                    st.stop()
+                st.write(f"Found: {company_name}")
                 # Fetch SEC filings
                 st.write("📋 Fetching SEC filings...")
-                company = Company(ticker)
+                company = Company(company_name)
                 filings = company.get_filings(form=["4", "8-K"]).to_pandas()
                 filings['filing_date'] = pd.to_datetime(filings['filing_date']).dt.date
                 filings = filings[(filings['filing_date'] >= start_date) & (filings['filing_date'] <= end_date)]
@@ -145,4 +151,3 @@ if ticker:
                 st.write(traceback.format_exc())
     else:
         st.info("👈 Enter a stock ticker in the sidebar to begin")
-
