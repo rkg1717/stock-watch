@@ -16,34 +16,6 @@ with st.sidebar:
     ticker = st.text_input("Enter Ticker", value="TSLA").upper()
     duration = st.slider("Days to track after filing", 1, 30, 5)
     st.info("Tracking Form 4 (Insider Trading) and 8-K (Current Events)")
-    
-    st.divider()
-    st.subheader("📊 Historical Price Analysis")
-    start_date = st.date_input("Analysis Start Date", value=datetime.now() - timedelta(days=90))
-    analysis_days = st.number_input("Days After Start to Analyze", min_value=1, max_value=365, value=30)
-    run_analysis = st.button("Run Historical Analysis")
-
-if run_analysis:
-    with st.status("Running historical analysis...", expanded=True) as h_status:
-        try:
-            stock = yf.Ticker(ticker)
-            hist = stock.history(start=start_date, period=min(analysis_days + 1, 365))
-            
-            if not hist.empty:
-                hist['Daily Return %'] = hist['Close'].pct_change() * 100
-                hist['Volume'] = hist['Volume'].astype(int)
-                
-                st.subheader(f"Price Action: {start_date} to {start_date + timedelta(days=analysis_days)}")
-                st.dataframe(hist[['Open', 'High', 'Low', 'Close', 'Daily Return %', 'Volume']], use_container_width=True)
-                
-                avg_return = hist['Daily Return %'].mean()
-                st.metric("Average Daily Return %", f"{avg_return:.2f}%")
-                
-                h_status.update(label="Analysis Complete!", state="complete")
-            else:
-                st.error("No data found for selected date range")
-        except Exception as e:
-            st.error(f"Error: {str(e)}")
 
 if ticker:
     with st.status(f"Analyzing {ticker}...", expanded=True) as status:
