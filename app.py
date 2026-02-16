@@ -78,16 +78,23 @@ if ticker and run_analysis:
             # Fetch SEC filings
             st.write("📋 Fetching SEC filings...")
             try:
-                company = Company(ticker)
+                # Need to look up the company's CIK from ticker/name
+                from edgar import Edgar
+                edgar_engine = Edgar()
+                # Search for company by ticker - get list of matching companies
+                companies = edgar_engine.find_company_name(ticker)
+                if not companies or len(companies) == 0:
+                    st.error(f"Could not find company for ticker: {ticker}. Please try a valid ticker.")
+                    st.stop()
+                # Use the first result
+                company_name = companies[0]
+                # Get CIK for the company
+                cik = edgar_engine.get_cik_by_company_name(company_name)
+                # Now create Company object with name and CIK
+                company = Company(company_name, cik)
                 filings = company.get_filings(form=["4", "8-K"]).to_pandas()
                 filings['filing_date'] = pd.to_datetime(filings['filing_date']).dt.date
                 filings = filings[(filings['filing_date'] >= start_date) & (filings['filing_date'] <= end_date)]
-            except Exception as e:
-                st.error(f"Error fetching SEC data for {ticker}: {str(e)}")
-                st.stop()
-                company_name = possible_companies[0]
-                cik = get_cik_by_company_name(company_name)
-                company = Company(company_name, cik)
             except Exception as e:
                 st.error(f"Error fetching SEC data for {ticker}: {str(e)}")
                 st.stop()
@@ -287,6 +294,7 @@ else:
         st.info("👈 Click 'Run SEC Event Analysis' to start")
     else:
         st.info("👈 Enter a stock ticker in the sidebar to begin")
+
 
 
 
