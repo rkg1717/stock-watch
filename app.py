@@ -78,19 +78,30 @@ if ticker and run_analysis:
             # Fetch SEC filings
             st.write("📋 Fetching SEC filings...")
             try:
-                # Need to look up the company's CIK from ticker/name
-                from edgar import Edgar
-                edgar_engine = Edgar()
-                # Search for company by ticker - get list of matching companies
-                companies = edgar_engine.find_company_name(ticker)
-                if not companies or len(companies) == 0:
-                    st.error(f"Could not find company for ticker: {ticker}. Please try a valid ticker.")
+                from edgar import Company
+                import requests
+                # Use yfinance to get company name from ticker
+                stock_info = yf.Ticker(ticker)
+                company_name = stock_info.info.get('longName', ticker)
+                if not company_name or company_name == ticker:
+                    st.error(f"Could not find company name for ticker {ticker}")
                     st.stop()
-                # Use the first result
-                company_name = companies[0]
-                # Get CIK for the company
-                cik = edgar_engine.get_cik_by_company_name(company_name)
-                # Now create Company object with name and CIK
+                # Look up CIK from SEC using company name
+                # SEC provides a JSON endpoint for this
+                sec_cik_url = "https://www.sec.gov/files/company_tickers.json"
+                response = requests.get(sec_cik_url)
+                companies = response.json()
+                # Search for matching company
+                cik = None
+                for cik_data in companies.values():
+                    if cik_data['ticker'].upper() == ticker.upper():
+                        cik = str(cik_data['cik_str']).zfill(10)
+                        company_name = cik_data['title']
+                        break
+                if not cik:
+                    st.error(f"Could not find CIK for ticker {ticker}. Try a different ticker.")
+                    st.stop()
+                # Now fetch SEC filings
                 company = Company(company_name, cik)
                 filings = company.get_filings(form=["4", "8-K"]).to_pandas()
                 filings['filing_date'] = pd.to_datetime(filings['filing_date']).dt.date
@@ -294,6 +305,7 @@ else:
         st.info("👈 Click 'Run SEC Event Analysis' to start")
     else:
         st.info("👈 Enter a stock ticker in the sidebar to begin")
+
 
 
 
