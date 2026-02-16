@@ -1,8 +1,9 @@
 streamlit
 pandas
 yfinance
-edgar==5.3.8
+edgar==5.1.16
 matplotlib
+
 
 
 
