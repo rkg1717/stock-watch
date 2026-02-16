@@ -77,13 +77,14 @@ if ticker and run_analysis:
             
             # Fetch SEC filings
             st.write("📋 Fetching SEC filings...")
-            # Convert ticker to company name and CIK
             try:
-                # Search for the company by ticker name
-                possible_companies = find_company_name(ticker)
-                if not possible_companies:
-                    st.error(f"Could not find company for ticker: {ticker}. Please try another ticker.")
-                    st.stop()
+                company = Company(ticker)
+                filings = company.get_filings(form=["4", "8-K"]).to_pandas()
+                filings['filing_date'] = pd.to_datetime(filings['filing_date']).dt.date
+                filings = filings[(filings['filing_date'] >= start_date) & (filings['filing_date'] <= end_date)]
+            except Exception as e:
+                st.error(f"Error fetching SEC data for {ticker}: {str(e)}")
+                st.stop()
                 company_name = possible_companies[0]
                 cik = get_cik_by_company_name(company_name)
                 company = Company(company_name, cik)
@@ -286,6 +287,7 @@ else:
         st.info("👈 Click 'Run SEC Event Analysis' to start")
     else:
         st.info("👈 Enter a stock ticker in the sidebar to begin")
+
 
 
 
