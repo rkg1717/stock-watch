@@ -68,7 +68,24 @@ if ticker:
                 # Fetch SEC filings
                 st.write(f"📋 Fetching SEC filings for {company_name}...")
                 company = Company(company_name, cik)
-                filings = company.get_filings(form=["4", "8-K"]).to_pandas()
+                # Fetch SEC filings
+                st.write(f"📋 Fetching SEC filings for {company_name}...")
+                company = Company(company_name, cik)
+                # Get both Form 4 and Form 8-K filings
+                filings_4 = company.get_all_filings(filing_type="4")
+                filings_8k = company.get_all_filings(filing_type="8-K")
+                # Combine them
+                if filings_4 is not None:
+                    filings_4 = filings_4.to_pandas()
+                else:
+                    filings_4 = pd.DataFrame()
+                if filings_8k is not None:
+                    filings_8k = filings_8k.to_pandas()
+                else:
+                    filings_8k = pd.DataFrame()
+                filings = pd.concat([filings_4, filings_8k], ignore_index=True)
+                filings['filing_date'] = pd.to_datetime(filings['filing_date']).dt.date
+                filings = filings[(filings['filing_date'] >= start_date) & (filings['filing_date'] <= end_date)]
                 filings['filing_date'] = pd.to_datetime(filings['filing_date']).dt.date
                 filings = filings[(filings['filing_date'] >= start_date) & (filings['filing_date'] <= end_date)]
                 if hist.empty or filings.empty:
@@ -183,3 +200,4 @@ if ticker:
                 st.write(traceback.format_exc())
     else:
         st.info("👈 Enter a stock ticker in the sidebar to begin")
+
