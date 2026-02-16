@@ -2,11 +2,11 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from edgar import set_identity, Company
+from edgar import Company
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
-set_identity("rkg1717@gmail.com")
+#set_identity("rkg1717@gmail.com")
 # SEC Form Type Descriptions - Most Impactful Forms
 SEC_FORM_DESCRIPTIONS = {
     '3': 'Initial Insider Filing',
@@ -286,6 +286,7 @@ else:
         st.info("👈 Click 'Run SEC Event Analysis' to start")
     else:
         st.info("👈 Enter a stock ticker in the sidebar to begin")
+
 
 
 
