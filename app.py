@@ -76,10 +76,13 @@ if ticker and run_analysis:
                 from edgar import Company
                 import requests
                 # Look up CIK from SEC using ticker
-                # SEC provides a JSON endpoint for this
                 sec_cik_url = "https://www.sec.gov/files/company_tickers.json"
+                # SEC requires a User-Agent header
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
                 try:
-                    response = requests.get(sec_cik_url, timeout=10)
+                    response = requests.get(sec_cik_url, headers=headers, timeout=10)
                     response.raise_for_status()
                     companies = response.json()
                 except Exception as e:
@@ -96,6 +99,17 @@ if ticker and run_analysis:
                 if not cik or not company_name:
                     st.error(f"Could not find company for ticker {ticker}. Please verify the ticker is correct.")
                     st.stop()
+                st.write(f"Found: {company_name} (CIK: {cik})")
+                # Now fetch SEC filings
+                company = Company(company_name, cik)
+                filings = company.get_filings(form=["4", "8-K"]).to_pandas()
+                filings['filing_date'] = pd.to_datetime(filings['filing_date']).dt.date
+                filings = filings[(filings['filing_date'] >= start_date) & (filings['filing_date'] <= end_date)]
+            except Exception as e:
+                st.error(f"Error fetching SEC data for {ticker}: {str(e)}")
+                import traceback
+                st.write(traceback.format_exc())
+                st.stop()
                 st.write(f"Found: {company_name} (CIK: {cik})")
                 # Now fetch SEC filings
                 company = Company(company_name, cik)
@@ -326,6 +340,7 @@ else:
         st.info("👈 Click 'Run SEC Event Analysis' to start")
     else:
         st.info("👈 Enter a stock ticker in the sidebar to begin")
+
 
 
 
