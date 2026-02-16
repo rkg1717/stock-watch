@@ -2,7 +2,7 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from sec_edgar import Company, set_identity
+from edgar import set_identity, Company
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
@@ -272,6 +272,7 @@ else:
         st.info("👈 Click 'Run SEC Event Analysis' to start")
     else:
         st.info("👈 Enter a stock ticker in the sidebar to begin")
+
 
 
 
