@@ -2,7 +2,7 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from edgar import Company
+from edgar import Edgar, Company
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
@@ -76,7 +76,16 @@ if ticker and run_analysis:
             
             # Fetch SEC filings
             st.write("📋 Fetching SEC filings...")
-            company = Company(ticker)
+            # Convert ticker to company name and CIK
+            edgar_obj = Edgar()
+            cik = edgar_obj.get_cik_by_company_name(ticker)
+            if cik is None:
+                st.error(f"Could not find CIK for ticker {ticker}. Please try another ticker.")
+                st.stop()
+            # Get the company name (you can also hardcode this if needed)
+            company_name = edgar_obj.get_company_name_by_cik(cik)
+            # Now create the Company object with name and CIK
+            company = Company(company_name, cik)
             filings = company.get_filings(form=["4", "8-K"]).to_pandas()
             filings['filing_date'] = pd.to_datetime(filings['filing_date']).dt.date
             filings = filings[(filings['filing_date'] >= start_date) & (filings['filing_date'] <= end_date)]
@@ -272,6 +281,7 @@ else:
         st.info("👈 Click 'Run SEC Event Analysis' to start")
     else:
         st.info("👈 Enter a stock ticker in the sidebar to begin")
+
 
 
 
