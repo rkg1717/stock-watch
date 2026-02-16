@@ -4,6 +4,40 @@ import pandas as pd
 from edgar import Company
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
+# Ticker to (Company Name, CIK) mapping
+TICKER_TO_CIK = {
+    'TSLA': ('Tesla Inc', '0001318605'),
+    'AAPL': ('Apple Inc', '0000320193'),
+    'MSFT': ('Microsoft Corporation', '0000789019'),
+    'GOOGL': ('Alphabet Inc', '0001652044'),
+    'AMZN': ('Amazon.com Inc', '0001018724'),
+    'NVDA': ('NVIDIA Corporation', '0001045810'),
+    'META': ('Meta Platforms Inc', '0001326801'),
+    'NFLX': ('Netflix Inc', '0001065280'),
+    'JPM': ('JPMorgan Chase & Co', '0000019617'),
+    'BAC': ('Bank of America Corporation', '0000070858'),
+    'WMT': ('Walmart Inc', '0000104169'),
+    'DIS': ('The Walt Disney Company', '0001018724'),
+    'VZ': ('Verizon Communications Inc', '0000732733'),
+    'PG': ('The Procter & Gamble Company', '0000080424'),
+    'JNJ': ('Johnson & Johnson', '0000200406'),
+    'INTC': ('Intel Corporation', '0000050104'),
+    'AMD': ('Advanced Micro Devices Inc', '0000002488'),
+    'CSCO': ('Cisco Systems Inc', '0000858877'),
+    'CRM': ('Salesforce Inc', '0001108524'),
+    'ADBE': ('Adobe Inc', '0000884896'),
+    'PYPL': ('PayPal Holdings Inc', '0001633917'),
+    'UBER': ('Uber Technologies Inc', '0001543151'),
+    'LYFT': ('Lyft Inc', '0001759816'),
+    'SPOT': ('Spotify Technology S.A.', '0001564408'),
+    'TSLA': ('Tesla Inc', '0001318605'),
+    'F': ('Ford Motor Company', '0000037996'),
+    'GM': ('General Motors Company', '0001467858'),
+    'TM': ('Toyota Motor Corporation', '0000912057'),
+    'GE': ('General Electric Company', '0000040545'),
+    'IBM': ('International Business Machines Corporation', '0000051143'),
+    'HPQ': ('HP Inc', '0000047217'),
+}
 st.set_page_config(page_title="SEC Event Price Impact Analyzer", layout="wide")
 st.title("📊 SEC Event Price Impact Analysis")
 # Sidebar Inputs
@@ -19,23 +53,21 @@ with st.sidebar:
         run_analysis = st.button("Run SEC Event Analysis", use_container_width=True)
 if ticker:
     if run_analysis:
+        # Check if ticker is in our database
+        if ticker.upper() not in TICKER_TO_CIK:
+            st.error(f"❌ Ticker '{ticker}' not found in database.")
+            st.info(f"📋 Available tickers: {', '.join(sorted(TICKER_TO_CIK.keys()))}")
+            st.stop()
+        company_name, cik = TICKER_TO_CIK[ticker.upper()]
         with st.status("Analyzing SEC events and price impact...", expanded=True) as status:
             try:
                 # Fetch stock data
                 st.write("📈 Fetching stock data...")
                 stock = yf.Ticker(ticker)
                 hist = stock.history(start=start_date, end=end_date + timedelta(days=30))
-                # Get company name from ticker
-                st.write("📋 Looking up company name...")
-                stock_info = yf.Ticker(ticker)
-                company_name = stock_info.info.get('longName', None)
-                if not company_name:
-                    st.error(f"Could not find company name for ticker {ticker}. Please try a different ticker.")
-                    st.stop()
-                st.write(f"Found: {company_name}")
                 # Fetch SEC filings
-                st.write("📋 Fetching SEC filings...")
-                company = Company(company_name)
+                st.write(f"📋 Fetching SEC filings for {company_name}...")
+                company = Company(company_name, cik)
                 filings = company.get_filings(form=["4", "8-K"]).to_pandas()
                 filings['filing_date'] = pd.to_datetime(filings['filing_date']).dt.date
                 filings = filings[(filings['filing_date'] >= start_date) & (filings['filing_date'] <= end_date)]
