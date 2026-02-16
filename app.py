@@ -1,11 +1,11 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from edgar import set_identity, Company
+from edgar import Company
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 # SEC Identity (Required)
-set_identity("rkg1717@gmail.com")
+#set_identity("rkg1717@gmail.com")
 st.set_page_config(page_title="SEC Event Price Impact Analyzer", layout="wide")
 st.title("📊 SEC Event Price Impact Analysis")
 # Sidebar Inputs
@@ -145,3 +145,4 @@ if ticker:
                 st.write(traceback.format_exc())
     else:
         st.info("👈 Enter a stock ticker in the sidebar to begin")
+
