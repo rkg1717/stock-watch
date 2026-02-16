@@ -2,10 +2,11 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from edgar import Company, find_company_name, get_cik_by_company_name
+from edgar import set_identity, Company
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
+set_identity("rkg1717@gmail.com")
 # SEC Form Type Descriptions - Most Impactful Forms
 SEC_FORM_DESCRIPTIONS = {
     '3': 'Initial Insider Filing',
@@ -89,6 +90,7 @@ if ticker and run_analysis:
             except Exception as e:
                 st.error(f"Error fetching SEC data for {ticker}: {str(e)}")
                 st.stop()
+            company = Company(ticker)
             filings = company.get_filings(form=["4", "8-K"]).to_pandas()
             filings['filing_date'] = pd.to_datetime(filings['filing_date']).dt.date
             filings = filings[(filings['filing_date'] >= start_date) & (filings['filing_date'] <= end_date)]
@@ -284,6 +286,7 @@ else:
         st.info("👈 Click 'Run SEC Event Analysis' to start")
     else:
         st.info("👈 Enter a stock ticker in the sidebar to begin")
+
 
 
 
