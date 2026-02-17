@@ -1,8 +1,10 @@
 streamlit
+requests
 pandas
-yfinance
-edgar
 matplotlib
+openai
+
+
 
 
 
