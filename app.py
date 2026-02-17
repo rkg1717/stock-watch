@@ -1,107 +1,197 @@
 import streamlit as st
-import yfinance as yf
+import requests
 import pandas as pd
-from edgar import set_identity, Company
+import datetime as dt
 import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
+import openai
 
-# SEC Identity (Required)
-set_identity("rkg1717@gmail.com")
+# -----------------------------
+# CONFIG
+# -----------------------------
+FINNHUB_KEY = st.secrets["FINNHUB_KEY"] 
+ALPHA_KEY = st.secrets["ALPHA_KEY"] 
+OPENAI_KEY = st.secrets["OPENAI_KEY"]
 
-st.set_page_config(page_title="Insider/Form 4 Watch", layout="wide")
-st.title("📈 Stock Performance vs. SEC Filings")
+openai.api_key = OPENAI_KEY
 
-# Sidebar Inputs
-with st.sidebar:
-    ticker = st.text_input("Enter Ticker", value="TSLA").upper()
-    duration = st.slider("Days to track after filing", 1, 30, 5)
-    st.info("Tracking Form 4 (Insider Trading) and 8-K (Current Events)")
+# -----------------------------
+# DATA HELPERS
+# -----------------------------
+def get_alpha_fundamentals(ticker):
+    """Pull quarterly fundamentals from Alpha Vantage."""
+    url = (
+        f"https://www.alphavantage.co/query?"
+        f"function=OVERVIEW&symbol={ticker}&apikey={ALPHA_KEY}"
+    )
+    data = requests.get(url).json()
+    return data
 
-if ticker:
-    with st.status(f"Analyzing {ticker}...", expanded=True) as status:
-        # 1. Fetch Stock Data
-        st.write("Fetching market data...")
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period="1y")
-        
-        # 2. Fetch SEC Filings
-        st.write("Searching SEC EDGAR...")
-        try:
-            company = Company(ticker)
-            filings = company.get_filings(form=["4", "8-K"]).to_pandas()
-            # Filter for recent filings
-            filings['filing_date'] = pd.to_datetime(filings['filing_date'])
-            filings = filings[filings['filing_date'] > (datetime.now() - timedelta(days=365))]
-        except:
-            filings = pd.DataFrame()
 
-        rows = []
-        if not hist.empty and not filings.empty:
-            st.write("Mapping filings to price action...")
-            
-            for _, filing in filings.iterrows():
-                f_date = filing['filing_date'].date()
-                
-                # Find the closest trading day on or after filing
-                trading_days = hist.index[hist.index.date >= f_date]
-                
-                if len(trading_days) > duration:
-                    start_date = trading_days[0]
-                    end_date = trading_days[duration]
-                    
-                    start_price = hist.loc[start_date, 'Close']
-                    end_price = hist.loc[end_date, 'Close']
-                    pc_change = ((end_price - start_price) / start_price) * 100
-                    
-                    rows.append({
-                        "Date": f_date,
-                        "Form": filing['form'],
-                        "Price at Filing": round(start_price, 2),
-                        "Price After": round(end_price, 2),
-                        f"% Change ({duration}d)": round(pc_change, 2),
-                        "Event": f"{filing['form']} Filing"
-                    })
+def get_alpha_quarterly_reports(ticker):
+    """Alpha Vantage quarterly earnings."""
+    url = (
+        f"https://www.alphavantage.co/query?"
+        f"function=EARNINGS&symbol={ticker}&apikey={ALPHA_KEY}"
+    )
+    data = requests.get(url).json()
+    if "quarterlyEarnings" not in data:
+        return pd.DataFrame()
+    df = pd.DataFrame(data["quarterlyEarnings"])
+    df["reportedDate"] = pd.to_datetime(df["reportedDate"])
+    return df
 
-        status.update(label="Analysis Complete!", state="complete", expanded=False)
 
-        # --- DISPLAY RESULTS ---
-        if rows:
-            df = pd.DataFrame(rows)
-            impact_col = f"% Change ({duration}d)"
-            
-            st.subheader(f"1. Average Performance ({duration} Days Post-Filing)")
-            chart_data = df.groupby("Event")[[impact_col]].mean()
-            st.bar_chart(chart_data)
-            
-            st.divider()
-            
-            st.subheader("2. Recency Check: Last 10 Trading Days")
-            recent = hist.tail(10).copy()
-            recent['Chg'] = (recent['Close'].pct_change() * 100).fillna(0)
-            
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
-            x_labs = [d.strftime('%m-%d') for d in recent.index]
-            
-            ax1.bar(x_labs, recent['Chg'], color=['g' if x >= 0 else 'r' for x in recent['Chg']])
-            ax1.set_ylabel("Price %")
-            ax1.set_title(f"{ticker} Recent Momentum")
-            
-            ax2.bar(x_labs, recent['Volume'], color='gray', alpha=0.4)
-            ax2.set_ylabel("Volume")
-            
-            plt.xticks(rotation=45)
-            st.pyplot(fig)
-            
-            st.divider()
-            
-            st.subheader("3. Historical Data Log")
-            st.dataframe(df, use_container_width=True)
+def get_finnhub_prices(ticker, start, end):
+    """Daily prices from Finnhub."""
+    url = "https://finnhub.io/api/v1/stock/candle"
+    params = {
+        "symbol": ticker,
+        "resolution": "D",
+        "from": int(start.timestamp()),
+        "to": int(end.timestamp()),
+        "token": FINNHUB_KEY
+    }
+    data = requests.get(url, params=params).json()
+    if data.get("s") != "ok":
+        return pd.DataFrame()
+    df = pd.DataFrame({
+        "t": pd.to_datetime(data["t"], unit="s"),
+        "c": data["c"]
+    })
+    df.rename(columns={"t": "date", "c": "close"}, inplace=True)
+    return df
+
+
+# -----------------------------
+# AI SENTIMENT
+# -----------------------------
+def classify_sentiment(metric_name, value):
+    """Use OpenAI to classify positive/neutral/negative."""
+    prompt = (
+        f"Metric: {metric_name}\n"
+        f"Value: {value}\n"
+        "Classify as positive, neutral, or negative for investors. "
+        "Respond with only one word."
+    )
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=2,
+        temperature=0
+    )
+
+    return response["choices"][0]["message"]["content"].strip()
+
+
+# -----------------------------
+# PRICE REACTION
+# -----------------------------
+def compute_price_reaction(price_df, report_date):
+    """Compute % change after 1,3,10,30 days."""
+    horizons = [1, 3, 10, 30]
+    out = {}
+
+    for h in horizons:
+        target = report_date + dt.timedelta(days=h)
+        future = price_df[price_df["date"] >= target].head(1)
+        base = price_df[price_df["date"] >= report_date].head(1)
+
+        if future.empty or base.empty:
+            out[f"{h}d"] = None
         else:
-            if not filings.empty:
-                st.warning("No trading data matches these filing dates (might be too recent).")
-            elif hist.empty:
-                st.error(f"Could not find stock data for {ticker}.")
-            else:
-                st.warning(f"No Form 4 or 8-K filings found for {ticker} in the last year.")
-else:
-    st.info("Enter a stock ticker in the sidebar to begin.")
+            out[f"{h}d"] = (future["close"].iloc[0] / base["close"].iloc[0] - 1) * 100
+
+    return out
+
+
+# -----------------------------
+# STREAMLIT UI
+# -----------------------------
+st.title("Quarterly Report Analyzer with AI Sentiment")
+
+ticker = st.text_input("Ticker", "AAPL").upper()
+col1, col2 = st.columns(2)
+with col1:
+    start_date = st.date_input("Start date", dt.date(2020, 1, 1))
+with col2:
+    end_date = st.date_input("End date", dt.date.today())
+
+if st.button("Run Analysis"):
+    st.write("### Fetching quarterly reports…")
+    earnings = get_alpha_quarterly_reports(ticker)
+
+    if earnings.empty:
+        st.error("No quarterly earnings found.")
+        st.stop()
+
+    earnings = earnings[
+        (earnings["reportedDate"].dt.date >= start_date) &
+        (earnings["reportedDate"].dt.date <= end_date)
+    ]
+
+    if earnings.empty:
+        st.warning("No reports in this date range.")
+        st.stop()
+
+    st.write("### Fetching fundamentals…")
+    fundamentals = get_alpha_fundamentals(ticker)
+
+    # Extract metrics
+    metrics = {
+        "ROE": fundamentals.get("ReturnOnEquityTTM"),
+        "OCF": fundamentals.get("OperatingCashFlowTTM"),
+        "Quick Ratio": fundamentals.get("QuickRatio"),
+        "EBIT": fundamentals.get("EBITDA"),  # Alpha Vantage uses EBITDA
+        "Revenue Growth": fundamentals.get("QuarterlyRevenueGrowthYOY"),
+        "P/B": fundamentals.get("PriceToBookRatio"),
+        "PEG": fundamentals.get("PEGRatio")
+    }
+
+    # AI sentiment
+    st.write("### AI Sentiment Classification")
+    sentiment_results = {}
+    for k, v in metrics.items():
+        sentiment_results[k] = classify_sentiment(k, v)
+
+    sentiment_df = pd.DataFrame({
+        "Metric": list(metrics.keys()),
+        "Value": list(metrics.values()),
+        "Sentiment": list(sentiment_results.values())
+    })
+
+    st.dataframe(sentiment_df)
+
+    # Price reaction
+    st.write("### Price Reaction After Reports")
+    all_reactions = []
+
+    # Pull price data once
+    price_df = get_finnhub_prices(
+        ticker,
+        dt.datetime.combine(start_date, dt.time()),
+        dt.datetime.combine(end_date + dt.timedelta(days=40), dt.time())
+    )
+
+    for _, row in earnings.iterrows():
+        report_date = row["reportedDate"].date()
+        reaction = compute_price_reaction(price_df, row["reportedDate"])
+        reaction["report_date"] = report_date
+        all_reactions.append(reaction)
+
+    reaction_df = pd.DataFrame(all_reactions)
+    st.dataframe(reaction_df)
+
+    # Plot
+    st.write("### Price Reaction Chart")
+    fig, ax = plt.subplots(figsize=(8, 4))
+    for h in ["1d", "3d", "10d", "30d"]:
+        if h in reaction_df.columns:
+            ax.plot(reaction_df["report_date"], reaction_df[h], marker="o", label=h)
+
+    ax.axhline(0, color="gray")
+    ax.set_ylabel("% change")
+    ax.set_title(f"{ticker} Price Reaction After Earnings")
+    ax.legend()
+    plt.xticks(rotation=45)
+    st.pyplot(fig)
